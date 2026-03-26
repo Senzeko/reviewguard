@@ -1,0 +1,1 @@
+ALTER TABLE "merchant_users" ADD COLUMN "notification_prefs" jsonb DEFAULT '{"onNewReview":true,"onScoringComplete":true,"onPdfReady":true,"onPosSync":true,"dailyDigest":false}'::jsonb NOT NULL;

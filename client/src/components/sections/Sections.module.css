@@ -1,0 +1,265 @@
+.twoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.col { min-width: 0; }
+.colTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-blue);
+  margin-bottom: 8px;
+}
+.colTitleMuted {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-gray-500);
+  margin-bottom: 8px;
+}
+.fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  font-size: 12px;
+  margin-bottom: 10px;
+}
+.fields dt {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+.fields dd {
+  color: var(--color-text-primary);
+}
+.reviewText {
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+.muted {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+.itemTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.itemTable th {
+  text-align: left;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  border-bottom: 1px solid var(--color-gray-200);
+  padding: 4px 6px;
+}
+.itemTable td {
+  padding: 5px 6px;
+}
+.altRow {
+  background: var(--color-gray-50);
+}
+
+/* Forensic Findings */
+.factorBlock {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-gray-200);
+}
+.factorBlock:last-of-type { border-bottom: none; }
+.factorHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+.factorName {
+  font-weight: 600;
+  font-size: 12px;
+}
+.factorWeight {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: auto;
+}
+.levelBadge {
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: white;
+}
+.pts {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.factorDetail {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  padding-left: 18px;
+  line-height: 1.5;
+}
+.aiDetails {
+  padding-left: 18px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+}
+.aiDetails p { margin: 2px 0; }
+.aiBadge {
+  display: inline-block;
+  background: var(--color-amber);
+  color: white;
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 6px;
+}
+.scoreBar { margin-top: 12px; }
+.scoreBarBg {
+  height: 6px;
+  background: var(--color-gray-200);
+  border-radius: 3px;
+}
+.scoreBarFill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.scoreBarLabel {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-top: 4px;
+  display: block;
+}
+
+/* Discrepancy Log */
+.discrepancyCard {
+  border-left: 3px solid var(--color-red);
+  background: var(--color-gray-50);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.discrepancyTitle {
+  font-weight: 600;
+  color: var(--color-red);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+}
+.greenCard {
+  background: #e6f7ef;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--color-green);
+}
+.noRecordCard {
+  background: var(--color-gray-50);
+  border-left: 3px solid var(--color-gray-500);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+.temporalNote {
+  border-left: 3px solid var(--color-amber);
+  background: #fff3e0;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.temporalTitle {
+  font-weight: 600;
+  color: var(--color-amber);
+  margin-bottom: 4px;
+}
+
+/* Timestamp Audit */
+.timeline {
+  padding: 8px 0 8px 8px;
+}
+.timeEvent {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 4px 0;
+}
+.timeDate {
+  font-weight: 600;
+  font-size: 12px;
+}
+.timeLabel {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+.timeSub {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.timeLine {
+  border-left: 2px solid var(--color-gray-200);
+  margin-left: 4px;
+  padding: 8px 0 8px 20px;
+}
+.timeGap {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.timeFooter {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* Merchant Statement */
+.policyTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-navy);
+  margin-bottom: 6px;
+}
+.policyBlock {
+  background: var(--color-gray-50);
+  border: 1px solid var(--color-gray-200);
+  border-left: 4px solid var(--color-navy);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 12px;
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+.policySub {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+.attestTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-navy);
+  margin-bottom: 6px;
+}
+.attestBlock {
+  background: var(--color-gray-50);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}

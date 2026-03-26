@@ -1,0 +1,88 @@
+.header {
+  background: white;
+  border: 1px solid var(--color-gray-200);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.topRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.merchant {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--color-navy);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 16px;
+}
+.bizName {
+  font-weight: 600;
+  font-size: 15px;
+}
+.caseInfo {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tierBadge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: white;
+}
+.badgeGreen { background: var(--color-green); }
+.badgeRed { background: var(--color-red); }
+.badgeGray { background: var(--color-gray-500); }
+.cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+.card {
+  background: var(--color-gray-50);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+.cardLabel {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+.cardValue {
+  display: block;
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.cardSub {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+.bar {
+  height: 4px;
+  background: var(--color-gray-200);
+  border-radius: 2px;
+  margin-top: 6px;
+}
+.barFill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}

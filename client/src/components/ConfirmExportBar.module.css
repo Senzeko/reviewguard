@@ -1,0 +1,55 @@
+.bar {
+  position: sticky;
+  bottom: 0;
+  background: white;
+  border-top: 1px solid var(--color-gray-200);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  z-index: 10;
+}
+.success {
+  background: #e6f7ef;
+  border-top-color: var(--color-green);
+}
+.info { flex: 1; }
+.info strong { font-size: 13px; }
+.info p { font-size: 11px; margin-top: 2px; }
+.lockedText { color: var(--color-text-muted); }
+.readyText { color: var(--color-green); }
+.errorText { color: var(--color-red); font-size: 11px; }
+.right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.countMuted { font-size: 12px; color: var(--color-text-muted); }
+.countGreen { font-size: 12px; color: var(--color-green); font-weight: 600; }
+.btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--color-navy);
+  color: white;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-green);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

@@ -1,0 +1,13 @@
+node_modules
+client/node_modules
+dist
+client/dist
+.env
+.env.*
+!.env.example
+evidence_vault
+playwright-results
+*.log
+.git
+.github
+.claude

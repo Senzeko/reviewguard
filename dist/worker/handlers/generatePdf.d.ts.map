@@ -1,0 +1,1 @@
+{"version":3,"file":"generatePdf.d.ts","sourceRoot":"","sources":["../../../src/worker/handlers/generatePdf.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAGH,OAAO,KAAK,EAAE,qBAAqB,EAAE,MAAM,qBAAqB,CAAC;AAMjE,wBAAsB,iBAAiB,CACrC,GAAG,EAAE,qBAAqB,GACzB,OAAO,CAAC,IAAI,CAAC,CAuCf"}

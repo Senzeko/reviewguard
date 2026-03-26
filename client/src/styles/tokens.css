@@ -1,0 +1,98 @@
+:root {
+  --color-navy: #1F4E79;
+  --color-blue: #2E5FA4;
+  --color-green: #1D9E75;
+  --color-amber: #BA7417;
+  --color-red: #E24B4A;
+  --color-gray-50: #F2F2F2;
+  --color-gray-200: #D1D1D1;
+  --color-gray-500: #888780;
+  --color-gray-700: #444441;
+  --color-text-primary: #1a1a1a;
+  --color-text-secondary: #595959;
+  --color-text-muted: #888780;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-text-primary: #e8e8e6;
+    --color-text-secondary: #a8a8a4;
+    --color-text-muted: #6a6a68;
+    --color-gray-50: #1e1e1c;
+    --color-gray-200: #2e2e2c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--color-text-primary);
+  background: #fafafa;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* ── Mobile responsive ─────────────────────────────────────────────── */
+
+@media (max-width: 768px) {
+  /* Dashboard stats grid: 2 cols on tablet, 1 on phone */
+  [style*="gridTemplateColumns: repeat(4"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Analytics 2-col grid → 1 col */
+  [style*="gridTemplateColumns: 1fr 1fr"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Admin stats grid → 2 cols */
+  [style*="gridTemplateColumns: repeat(3"] {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  /* Make tables scroll horizontally */
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  thead, tbody, tr {
+    display: table;
+    width: 100%;
+    table-layout: fixed;
+  }
+
+  /* Stack header buttons */
+  header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  header > div:last-child {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  /* 1 col everywhere on small phones */
+  [style*="gridTemplateColumns: repeat(2"] {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Smaller page padding */
+  body {
+    font-size: 14px;
+  }
+}

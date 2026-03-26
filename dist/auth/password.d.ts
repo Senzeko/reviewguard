@@ -1,0 +1,9 @@
+/**
+ * src/auth/password.ts
+ *
+ * Password hashing using Node's built-in crypto.scrypt.
+ * No third-party dependencies — consistent with src/secrets/index.ts pattern.
+ */
+export declare function hashPassword(password: string): Promise<string>;
+export declare function verifyPassword(password: string, stored: string): Promise<boolean>;
+//# sourceMappingURL=password.d.ts.map
