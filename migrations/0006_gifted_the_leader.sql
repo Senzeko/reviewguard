@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS "subscriptions" (
 	CONSTRAINT "subscriptions_merchant_id_unique" UNIQUE("merchant_id")
 );
 --> statement-breakpoint
-ALTER TABLE "merchant_users" ADD COLUMN "is_admin" boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE "merchant_users" ADD COLUMN IF NOT EXISTS "is_admin" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 DO $$ BEGIN
  ALTER TABLE "merchant_locations" ADD CONSTRAINT "merchant_locations_merchant_id_merchants_id_fk" FOREIGN KEY ("merchant_id") REFERENCES "public"."merchants"("id") ON DELETE cascade ON UPDATE no action;
 EXCEPTION

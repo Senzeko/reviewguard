@@ -44,10 +44,15 @@ export function Analytics() {
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <h1 style={styles.title}>Analytics</h1>
-        <button onClick={() => navigate('/dashboard')} style={styles.backBtn}>Back to Dashboard</button>
-      </header>
+      <section style={styles.heroCard}>
+        <div>
+          <h1 style={styles.title}>Analytics</h1>
+          <p style={styles.subtitle}>Monitor performance, scoring distribution, and dispute outcomes.</p>
+        </div>
+        <button onClick={() => navigate('/dashboard')} style={styles.backBtn}>
+          Back to Dashboard
+        </button>
+      </section>
 
       {/* Review Trends */}
       <div style={styles.card}>
@@ -63,11 +68,11 @@ export function Analytics() {
         </div>
         <ResponsiveContainer width="100%" height={280}>
           <LineChart data={trends}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <CartesianGrid strokeDasharray="3 3" stroke="#eef0f2" />
             <XAxis dataKey="date" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
             <Tooltip />
-            <Line type="monotone" dataKey="reviews" stroke="#1F4E79" strokeWidth={2} dot={{ r: 3 }} />
+            <Line type="monotone" dataKey="reviews" stroke="#6d28d9" strokeWidth={2} dot={{ r: 3 }} />
           </LineChart>
         </ResponsiveContainer>
       </div>
@@ -78,7 +83,7 @@ export function Analytics() {
           <h2 style={styles.cardTitle}>Score Distribution</h2>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={scores}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#eef0f2" />
               <XAxis dataKey="bucket" tick={{ fontSize: 11 }} />
               <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
               <Tooltip />
@@ -114,11 +119,11 @@ export function Analytics() {
           <h2 style={styles.cardTitle}>Rating Breakdown</h2>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={ratings}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#eef0f2" />
               <XAxis dataKey="rating" tick={{ fontSize: 11 }} tickFormatter={v => `${v}★`} />
               <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
               <Tooltip />
-              <Bar dataKey="count" fill="#1F4E79" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="count" fill="#6d28d9" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -152,12 +157,32 @@ function FunnelStep({ label, value, pct, color }: { label: string; value: number
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { maxWidth: 1100, margin: '0 auto', padding: '24px 16px' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  title: { fontSize: 22, fontWeight: 700, color: '#1F4E79' },
-  backBtn: { padding: '8px 16px', background: 'white', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#444' },
-  card: { background: 'white', borderRadius: 12, padding: 24, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: 20 },
-  cardTitle: { fontSize: 16, fontWeight: 600, color: '#333', marginBottom: 8 },
+  page: { display: 'grid', gap: 14 },
+  heroCard: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 12,
+    padding: 20,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  title: { fontSize: 34, lineHeight: 1.1, margin: 0, color: '#111827' },
+  subtitle: { fontSize: 14, color: '#6b7280', margin: '8px 0 0' },
+  backBtn: {
+    padding: '8px 12px',
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 8,
+    fontSize: 12,
+    cursor: 'pointer',
+    color: '#4b5563',
+    fontWeight: 600,
+  },
+  card: { background: '#fff', borderRadius: 12, padding: 18, border: '1px solid #e5e7eb' },
+  cardTitle: { fontSize: 16, fontWeight: 600, color: '#111827', marginBottom: 8 },
   grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 },
-  select: { padding: '6px 12px', border: '1px solid #d1d1d1', borderRadius: 6, fontSize: 13 },
+  select: { padding: '6px 12px', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, color: '#4b5563' },
 };

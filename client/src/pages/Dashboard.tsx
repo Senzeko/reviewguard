@@ -27,9 +27,12 @@ const TIER_LABELS: Record<string, string> = {
 };
 
 function StarRating({ rating }: { rating: number }) {
-  return <span style={{ color: rating <= 2 ? '#E24B4A' : rating <= 3 ? '#BA7417' : '#1D9E75' }}>
-    {'★'.repeat(rating)}{'☆'.repeat(5 - rating)}
-  </span>;
+  return (
+    <span style={{ color: rating <= 2 ? '#ef4444' : rating <= 3 ? '#d97706' : '#16a34a' }}>
+      {'★'.repeat(rating)}
+      {'☆'.repeat(5 - rating)}
+    </span>
+  );
 }
 
 export function Dashboard() {
@@ -85,50 +88,81 @@ export function Dashboard() {
   }, [page, statusFilter]);
 
   const totalPages = Math.ceil(total / 15);
+  const avgConfidence =
+    items.length > 0
+      ? Math.round(
+          items.reduce((acc, item) => acc + (item.confidenceScore ?? 0), 0) /
+            Math.max(
+              1,
+              items.reduce((acc, item) => acc + (item.confidenceScore == null ? 0 : 1), 0),
+            ),
+        )
+      : 0;
+
+  const needsAttention = (stats?.noRecord ?? 0) + (stats?.mismatch ?? 0);
 
   return (
     <div style={styles.page}>
-      {/* Header */}
-      <header style={styles.header}>
+      <section style={styles.heroCard}>
         <div>
-          <h1 style={styles.bizName}>{user?.merchant?.businessName ?? 'ReviewGuard AI'}</h1>
-          <span style={styles.meta}>
-            {user?.merchant?.posProvider} &middot;{' '}
-            {user?.merchant?.lastSyncAt
-              ? `Last sync: ${new Date(user.merchant.lastSyncAt).toLocaleDateString()}`
-              : 'No sync yet'}
+          <h1 style={styles.pageTitle}>Launch Campaigns</h1>
+          <p style={styles.pageSubtitle}>
+            Monitor campaign readiness and review matching signals across all locations.
+          </p>
+        </div>
+        <div style={styles.heroActions}>
+          <button onClick={() => navigate('/analytics')} style={styles.softBtn}>
+            Analytics
+          </button>
+          <button onClick={() => navigate('/locations')} style={styles.softBtn}>
+            Locations
+          </button>
+          <button onClick={() => navigate('/settings')} style={styles.softBtn}>
+            Settings
+          </button>
+          <button onClick={() => navigate('/billing')} style={styles.primaryBtn}>
+            Billing
+          </button>
+          <button onClick={() => void logout().then(() => navigate('/login'))} style={styles.softBtn}>
+            Sign out
+          </button>
+        </div>
+      </section>
+
+      {stats ? (
+        <section style={styles.statsRow}>
+          <StatCard label="Total Reviews" value={stats.total} color="#4f46e5" />
+          <StatCard label="Awaiting Score" value={stats.pending} color="#ef4444" />
+          <StatCard label="Avg Confidence" value={avgConfidence} suffix="%" color="#059669" />
+          <StatCard label="Verified" value={stats.verified} color="#2563eb" />
+          <StatCard label="Needs Action" value={stats.noRecord + stats.mismatch} color="#d97706" />
+        </section>
+      ) : null}
+
+      <section style={styles.attentionBand}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <strong style={{ color: '#7c2d12', fontSize: 13 }}>Attention</strong>
+          <span style={{ color: '#9a3412', fontSize: 13 }}>
+            {needsAttention} items need manual verification or follow-up.
           </span>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{
-            width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-            background: sseStatus === 'connected' ? '#1D9E75' : sseStatus === 'connecting' ? '#BA7417' : '#E24B4A',
-          }} title={`Live: ${sseStatus}`} />
-          <span style={{ fontSize: 13, color: '#888' }}>{user?.email}</span>
-          <button onClick={() => navigate('/analytics')} style={styles.navBtn}>Analytics</button>
-          <button onClick={() => navigate('/locations')} style={styles.navBtn}>Locations</button>
-          <button onClick={() => navigate('/billing')} style={styles.navBtn}>Billing</button>
-          <button onClick={() => navigate('/settings')} style={styles.settingsBtn}>Settings</button>
-          <button onClick={() => void logout().then(() => navigate('/login'))} style={styles.logoutBtn}>Sign out</button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9a3412', fontSize: 12 }}>
+          <span>{user?.merchant?.businessName ?? 'ReviewGuard AI'}</span>
+          <span style={{ color: '#c2410c' }}>
+            {sseStatus === 'connected' ? 'Live' : sseStatus === 'connecting' ? 'Connecting' : 'Offline'}
+          </span>
+          <span>{user?.email}</span>
         </div>
-      </header>
+      </section>
 
-      {/* Stats */}
-      {stats && (
-        <div style={styles.statsRow}>
-          <StatCard label="Total Reviews" value={stats.total} color="#1F4E79" />
-          <StatCard label="Awaiting Score" value={stats.pending} color="#BA7417" />
-          <StatCard label="Action Needed" value={stats.noRecord + stats.mismatch} color="#E24B4A" />
-          <StatCard label="Real Customers" value={stats.verified} color="#1D9E75" />
-        </div>
-      )}
-
-      {/* Filter tabs */}
-      <div style={styles.tabs}>
+      <section style={styles.filtersRow}>
         {STATUS_TABS.map((tab) => (
           <button
             key={tab.value}
-            onClick={() => { setStatusFilter(tab.value); setPage(1); }}
+            onClick={() => {
+              setStatusFilter(tab.value);
+              setPage(1);
+            }}
             style={{
               ...styles.tab,
               ...(statusFilter === tab.value ? styles.tabActive : {}),
@@ -137,10 +171,9 @@ export function Dashboard() {
             {tab.label}
           </button>
         ))}
-      </div>
+      </section>
 
-      {/* Table */}
-      <div style={styles.tableWrap}>
+      <section style={styles.tableWrap}>
         <table style={styles.table}>
           <thead>
             <tr>
@@ -188,48 +221,118 @@ export function Dashboard() {
             )}
           </tbody>
         </table>
-      </div>
+      </section>
 
       {/* Pagination */}
-      {totalPages > 1 && (
+      {totalPages > 1 ? (
         <div style={styles.pagination}>
           <button disabled={page <= 1} onClick={() => setPage(page - 1)} style={styles.pageBtn}>Prev</button>
           <span style={{ fontSize: 14, color: '#888' }}>Page {page} of {totalPages}</span>
           <button disabled={page >= totalPages} onClick={() => setPage(page + 1)} style={styles.pageBtn}>Next</button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
 
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+function StatCard({
+  label,
+  value,
+  color,
+  suffix,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  suffix?: string;
+}) {
   return (
     <div style={styles.statCard}>
-      <span style={{ fontSize: 13, color: '#888' }}>{label}</span>
-      <span style={{ fontSize: 28, fontWeight: 700, color }}>{value}</span>
+      <span style={{ fontSize: 12, color: '#6b7280' }}>{label}</span>
+      <span style={{ fontSize: 34, fontWeight: 700, color }}>
+        {value}
+        {suffix ?? ''}
+      </span>
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { maxWidth: 1100, margin: '0 auto', padding: '24px 16px' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, paddingBottom: 16, borderBottom: '1px solid #e0e0e0' },
-  bizName: { fontSize: 22, fontWeight: 700, color: '#1F4E79' },
-  meta: { fontSize: 13, color: '#888' },
-  navBtn: { padding: '8px 12px', background: 'white', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#444' },
-  settingsBtn: { padding: '8px 16px', background: 'white', border: '1px solid #1F4E79', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#1F4E79', fontWeight: 600 },
-  logoutBtn: { padding: '8px 16px', background: 'white', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#444' },
-  statsRow: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 },
-  statCard: { background: 'white', padding: 20, borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', gap: 4 },
-  tabs: { display: 'flex', gap: 4, marginBottom: 16 },
-  tab: { padding: '8px 16px', background: 'white', border: '1px solid #e0e0e0', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#444' },
-  tabActive: { background: '#1F4E79', color: 'white', borderColor: '#1F4E79' },
-  tableWrap: { background: 'white', borderRadius: 12, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', overflow: 'hidden' },
+  page: { display: 'grid', gap: 14 },
+  heroCard: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 12,
+    padding: 20,
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 16,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  pageTitle: { fontSize: 34, lineHeight: 1.1, margin: 0, color: '#111827' },
+  pageSubtitle: { fontSize: 14, color: '#6b7280', margin: '8px 0 0' },
+  heroActions: { display: 'flex', gap: 8, flexWrap: 'wrap' },
+  softBtn: {
+    height: 34,
+    padding: '0 12px',
+    borderRadius: 8,
+    border: '1px solid #e5e7eb',
+    background: '#fff',
+    color: '#4b5563',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+  },
+  primaryBtn: {
+    height: 34,
+    padding: '0 12px',
+    borderRadius: 8,
+    border: '1px solid #6d28d9',
+    background: '#6d28d9',
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: 'pointer',
+  },
+  statsRow: { display: 'grid', gridTemplateColumns: 'repeat(5, minmax(0, 1fr))', gap: 12 },
+  statCard: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    padding: 16,
+    borderRadius: 10,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  attentionBand: {
+    background: '#fffbeb',
+    border: '1px solid #fde68a',
+    borderRadius: 10,
+    padding: '10px 14px',
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: 10,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+  },
+  filtersRow: {
+    display: 'flex',
+    gap: 6,
+    flexWrap: 'wrap',
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 10,
+    padding: 8,
+  },
+  tab: { padding: '7px 12px', background: 'white', border: '1px solid #e5e7eb', borderRadius: 999, fontSize: 12, cursor: 'pointer', color: '#4b5563' },
+  tabActive: { background: '#eef2ff', color: '#4338ca', borderColor: '#c7d2fe' },
+  tableWrap: { background: 'white', borderRadius: 12, border: '1px solid #e5e7eb', overflow: 'hidden' },
   table: { width: '100%', borderCollapse: 'collapse' },
-  th: { padding: '12px 16px', textAlign: 'left', fontSize: 12, fontWeight: 600, color: '#888', borderBottom: '1px solid #e0e0e0', textTransform: 'uppercase' },
-  td: { padding: '14px 16px', fontSize: 14, borderBottom: '1px solid #f0f0f0' },
+  th: { padding: '12px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#6b7280', borderBottom: '1px solid #e5e7eb', textTransform: 'uppercase' },
+  td: { padding: '14px 16px', fontSize: 13, borderBottom: '1px solid #f3f4f6', color: '#111827' },
   row: { cursor: 'pointer', transition: 'background 0.15s' },
-  tierBadge: { display: 'inline-block', padding: '3px 10px', borderRadius: 12, color: 'white', fontSize: 11, fontWeight: 600, textTransform: 'uppercase' },
+  tierBadge: { display: 'inline-block', padding: '3px 10px', borderRadius: 999, color: 'white', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' },
   pagination: { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 16, marginTop: 20 },
-  pageBtn: { padding: '8px 16px', background: 'white', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 13, cursor: 'pointer' },
+  pageBtn: { padding: '8px 16px', background: 'white', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 13, cursor: 'pointer' },
 };

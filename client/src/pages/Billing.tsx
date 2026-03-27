@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 
 interface BillingStatus {
@@ -9,6 +9,12 @@ interface BillingStatus {
   reviewsUsed: number;
   currentPeriodEnd: string | null;
   stripeConfigured: boolean;
+  connect?: {
+    accountId: string | null;
+    chargesEnabled: boolean;
+    payoutsEnabled: boolean;
+    detailsSubmitted: boolean;
+  };
 }
 
 const PLANS = [
@@ -47,14 +53,28 @@ const PLANS = [
   },
 ];
 
+function connectPillStyle(ok: boolean): React.CSSProperties {
+  return {
+    padding: '2px 8px',
+    borderRadius: 6,
+    fontSize: 12,
+    fontWeight: 600,
+    background: ok ? '#E8F5E9' : '#FFF3E0',
+    color: ok ? '#1D9E75' : '#BA7417',
+  };
+}
+
 export function Billing() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [loading, setLoading] = useState('');
+  const [connectLoading, setConnectLoading] = useState(false);
 
+  const connectQuery = searchParams.get('connect');
   useEffect(() => {
     api.get('/api/billing/status').then(r => setBilling(r.data)).catch(() => {});
-  }, []);
+  }, [connectQuery]);
 
   async function handleCheckout(planId: string) {
     if (!billing?.stripeConfigured) return;
@@ -78,21 +98,38 @@ export function Billing() {
     } catch { /* */ }
   }
 
+  /** Opens Stripe Connect onboarding; sends session cookie (must be logged in on this origin). */
+  async function handleConnectOnboarding() {
+    if (!billing?.stripeConfigured) return;
+    setConnectLoading(true);
+    try {
+      const { data } = await api.post<{ url: string; accountId: string }>(
+        '/api/billing/connect/account-link',
+      );
+      if (data.url) window.location.href = data.url;
+    } catch {
+      setConnectLoading(false);
+    }
+  }
+
   const usagePct = billing ? Math.min(100, Math.round((billing.reviewsUsed / billing.reviewLimit) * 100)) : 0;
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <h1 style={styles.title}>Billing & Plans</h1>
+      <section style={styles.heroCard}>
+        <div>
+          <h1 style={styles.title}>Billing & Plans</h1>
+          <p style={styles.subtitle}>Manage subscription limits, plan upgrades, and Stripe payout onboarding.</p>
+        </div>
         <button onClick={() => navigate('/dashboard')} style={styles.backBtn}>Back to Dashboard</button>
-      </header>
+      </section>
 
       {/* Current Plan Summary */}
       {billing && (
         <div style={styles.currentPlan}>
           <div style={{ flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8 }}>
-              <h2 style={{ margin: 0, fontSize: 18, color: '#1F4E79' }}>
+              <h2 style={{ margin: 0, fontSize: 18, color: '#111827' }}>
                 {billing.plan.charAt(0).toUpperCase() + billing.plan.slice(1)} Plan
               </h2>
               <span style={{
@@ -131,6 +168,34 @@ export function Billing() {
               Manage Subscription
             </button>
           )}
+        </div>
+      )}
+
+      {billing?.stripeConfigured && (
+        <div style={styles.connectCard}>
+          <h2 style={{ margin: '0 0 8px', fontSize: 18, color: '#1F4E79' }}>Stripe Connect (payouts)</h2>
+          <p style={{ margin: '0 0 12px', fontSize: 13, color: '#666' }}>
+            Link a Stripe Express account to receive payouts. Uses your logged-in session — open this page at{' '}
+            <strong>http://localhost:5173</strong> after signing in (not the API port alone).
+          </p>
+          {billing.connect && (
+            <div style={{ fontSize: 13, color: '#555', marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <span style={connectPillStyle(billing.connect.chargesEnabled)}>Charges {billing.connect.chargesEnabled ? 'on' : 'off'}</span>
+              <span style={connectPillStyle(billing.connect.payoutsEnabled)}>Payouts {billing.connect.payoutsEnabled ? 'on' : 'off'}</span>
+              <span style={connectPillStyle(billing.connect.detailsSubmitted)}>Details {billing.connect.detailsSubmitted ? 'submitted' : 'pending'}</span>
+              {billing.connect.accountId && (
+                <span style={{ fontSize: 12, color: '#888' }}>Account {billing.connect.accountId}</span>
+              )}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleConnectOnboarding()}
+            disabled={connectLoading}
+            style={styles.connectBtn}
+          >
+            {connectLoading ? 'Opening Stripe…' : 'Continue Connect onboarding'}
+          </button>
         </div>
       )}
 
@@ -186,18 +251,45 @@ export function Billing() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { maxWidth: 1100, margin: '0 auto', padding: '24px 16px' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  title: { fontSize: 22, fontWeight: 700, color: '#1F4E79' },
-  backBtn: { padding: '8px 16px', background: 'white', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#444' },
-  currentPlan: { background: 'white', borderRadius: 12, padding: 24, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', marginBottom: 32, display: 'flex', alignItems: 'center', gap: 24 },
-  portalBtn: { padding: '10px 20px', background: 'white', border: '1px solid #1F4E79', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#1F4E79', fontWeight: 600, whiteSpace: 'nowrap' },
+  page: { display: 'grid', gap: 14 },
+  heroCard: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 12,
+    padding: 20,
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  title: { fontSize: 34, lineHeight: 1.1, margin: 0, color: '#111827' },
+  subtitle: { fontSize: 14, color: '#6b7280', margin: '8px 0 0' },
+  backBtn: { padding: '8px 12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12, cursor: 'pointer', color: '#4b5563', fontWeight: 600 },
+  currentPlan: { background: '#fff', borderRadius: 12, padding: 20, border: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 24 },
+  portalBtn: { padding: '10px 14px', background: '#fff', border: '1px solid #6d28d9', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#6d28d9', fontWeight: 600, whiteSpace: 'nowrap' },
+  connectCard: {
+    background: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    border: '1px solid #e5e7eb',
+  },
+  connectBtn: {
+    padding: '10px 14px',
+    background: '#6d28d9',
+    border: 'none',
+    borderRadius: 8,
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: 'pointer',
+    color: 'white',
+  },
   planGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 },
-  planCard: { background: 'white', borderRadius: 12, padding: 24, boxShadow: '0 1px 3px rgba(0,0,0,0.06)', display: 'flex', flexDirection: 'column', position: 'relative', border: '2px solid transparent' },
-  planPopular: { border: '2px solid #1F4E79' },
+  planCard: { background: '#fff', borderRadius: 12, padding: 20, border: '1px solid #e5e7eb', display: 'flex', flexDirection: 'column', position: 'relative' },
+  planPopular: { border: '2px solid #6d28d9' },
   planCurrent: { background: '#f8fbff' },
-  popularBadge: { position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: '#1F4E79', color: 'white', padding: '4px 14px', borderRadius: 12, fontSize: 11, fontWeight: 600 },
-  upgradeBtn: { padding: '10px 20px', background: 'white', border: '1px solid #1F4E79', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', color: '#1F4E79', textAlign: 'center' },
-  upgradeBtnPrimary: { padding: '10px 20px', background: '#1F4E79', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer', color: 'white', textAlign: 'center' },
+  popularBadge: { position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)', background: '#6d28d9', color: 'white', padding: '4px 14px', borderRadius: 12, fontSize: 11, fontWeight: 600 },
+  upgradeBtn: { padding: '10px 14px', background: '#fff', border: '1px solid #6d28d9', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', color: '#6d28d9', textAlign: 'center' },
+  upgradeBtnPrimary: { padding: '10px 14px', background: '#6d28d9', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: 'pointer', color: 'white', textAlign: 'center' },
   currentBtn: { padding: '10px 20px', background: '#f0f0f0', border: 'none', borderRadius: 8, fontSize: 14, color: '#888', textAlign: 'center' },
 };
