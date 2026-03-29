@@ -11,6 +11,7 @@
  */
 
 import {
+  bigint,
   boolean,
   index,
   integer,
@@ -135,12 +136,11 @@ export const subscriptions = pgTable('subscriptions', {
     .default(sql`gen_random_uuid()`),
 
   merchantId: uuid('merchant_id')
-    .notNull()
-    .references(() => merchants.id, { onDelete: 'cascade' })
-    .unique(),
+    .references(() => merchants.id, { onDelete: 'cascade' }),
+  ownerUserId: uuid('owner_user_id'),
 
-  /** Stripe customer ID */
-  stripeCustomerId: text('stripe_customer_id').notNull(),
+  /** Stripe customer ID — null for free-tier PodSignal rows until first checkout */
+  stripeCustomerId: text('stripe_customer_id'),
 
   /** Stripe subscription ID */
   stripeSubscriptionId: text('stripe_subscription_id'),
@@ -157,7 +157,17 @@ export const subscriptions = pgTable('subscriptions', {
   /** Reviews used this billing period */
   reviewsUsed: integer('reviews_used').notNull().default(0),
 
+  /**
+   * Free-tier month bucket for resetting reviewsUsed (UTC `YYYY-MM`).
+   * Paid workspaces with an active Stripe period use currentPeriodEnd instead.
+   */
+  processingQuotaPeriodKey: text('processing_quota_period_key'),
+
   currentPeriodEnd: timestamp('current_period_end', { withTimezone: true }),
+  stripeConnectAccountId: text('stripe_connect_account_id'),
+  connectChargesEnabled: boolean('connect_charges_enabled').notNull().default(false),
+  connectPayoutsEnabled: boolean('connect_payouts_enabled').notNull().default(false),
+  connectDetailsSubmitted: boolean('connect_details_submitted').notNull().default(false),
 
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
@@ -488,3 +498,410 @@ export interface FactorBreakdown {
   temporal: { score: number; detail: string };
   line_item: { score: number; detail: string };
 }
+
+// ── PodSignal enums/tables ───────────────────────────────────────────────────
+
+export const episodeStatusEnum = pgEnum('episode_status', [
+  'DRAFT',
+  'PROCESSING',
+  'READY',
+  'FAILED',
+  'PUBLISHED',
+  'ARCHIVED',
+]);
+
+export const signalTypeEnum = pgEnum('signal_type', [
+  'HIGHLIGHT',
+  'TOPIC_SHIFT',
+  'QUOTE',
+  'QUESTION',
+  'AD_BREAK',
+  'INTRO',
+  'OUTRO',
+]);
+
+export const campaignStatusEnum = pgEnum('campaign_status', [
+  'DRAFT',
+  'ACTIVE',
+  'COMPLETED',
+  'ARCHIVED',
+]);
+
+export const podcasts = pgTable(
+  'podcasts',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => merchantUsers.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    description: text('description'),
+    artworkUrl: text('artwork_url'),
+    rssFeedUrl: text('rss_feed_url'),
+    spotifyId: text('spotify_id'),
+    applePodcastId: text('apple_podcast_id'),
+    settings: jsonb('settings').notNull().default(sql`'{}'::jsonb`),
+    isActive: boolean('is_active').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    index('idx_podcasts_owner_id').on(table.ownerId),
+  ],
+);
+
+export const episodes = pgTable(
+  'episodes',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    podcastId: uuid('podcast_id')
+      .notNull()
+      .references(() => podcasts.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    description: text('description'),
+    audioUrl: text('audio_url'),
+    audioLocalRelPath: text('audio_local_rel_path'),
+    audioMimeType: text('audio_mime_type'),
+    durationSeconds: integer('duration_seconds'),
+    episodeNumber: integer('episode_number'),
+    seasonNumber: integer('season_number'),
+    transcript: text('transcript'),
+    summary: text('summary'),
+    chapters: jsonb('chapters'),
+    status: episodeStatusEnum('status').notNull().default('DRAFT'),
+    processingError: text('processing_error'),
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    index('idx_episodes_podcast_id').on(table.podcastId),
+    index('idx_episodes_status').on(table.status),
+    index('idx_episodes_published_at').on(table.publishedAt),
+  ],
+);
+
+export const signals = pgTable(
+  'signals',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    episodeId: uuid('episode_id')
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'cascade' }),
+    type: signalTypeEnum('type').notNull(),
+    startSec: integer('start_sec').notNull(),
+    endSec: integer('end_sec').notNull(),
+    confidence: integer('confidence').notNull(),
+    label: text('label').notNull(),
+    transcriptSnippet: text('transcript_snippet'),
+    metadata: jsonb('metadata'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [index('idx_signals_episode_id').on(table.episodeId), index('idx_signals_type').on(table.type)],
+);
+
+export const clips = pgTable(
+  'clips',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    episodeId: uuid('episode_id')
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'cascade' }),
+    signalId: uuid('signal_id').references(() => signals.id, { onDelete: 'set null' }),
+    title: text('title').notNull(),
+    startSec: integer('start_sec').notNull(),
+    endSec: integer('end_sec').notNull(),
+    clipUrl: text('clip_url'),
+    transcriptSnippet: text('transcript_snippet'),
+    isPublished: boolean('is_published').notNull().default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [index('idx_clips_episode_id').on(table.episodeId)],
+);
+
+export const transcriptSegments = pgTable(
+  'transcript_segments',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    episodeId: uuid('episode_id')
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull().default(0),
+    startMs: integer('start_ms').notNull(),
+    endMs: integer('end_ms').notNull(),
+    text: text('text').notNull(),
+    speaker: text('speaker'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [index('idx_transcript_segments_episode_id').on(table.episodeId)],
+);
+
+export const campaigns = pgTable('campaigns', {
+  id: uuid('id')
+    .primaryKey()
+    .default(sql`gen_random_uuid()`),
+  episodeId: uuid('episode_id')
+    .notNull()
+    .references(() => episodes.id, { onDelete: 'cascade' }),
+  status: campaignStatusEnum('status').notNull().default('DRAFT'),
+  utmCampaign: text('utm_campaign'),
+  /** Draft / approved selections for launch packaging (title, clips, guest kit, channels). */
+  launchPack: jsonb('launch_pack').notNull().default(sql`'{}'::jsonb`),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().default(sql`now()`),
+});
+
+export const campaignTasks = pgTable(
+  'campaign_tasks',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    campaignId: uuid('campaign_id')
+      .notNull()
+      .references(() => campaigns.id, { onDelete: 'cascade' }),
+    taskType: text('task_type').notNull().default('custom'),
+    label: text('label').notNull(),
+    doneAt: timestamp('done_at', { withTimezone: true }),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [index('idx_campaign_tasks_campaign_id').on(table.campaignId)],
+);
+
+/** Tracks selection, approval, copy, and export of PodSignal-generated assets (product learning loop). */
+export const podsignalOutputUsage = pgTable(
+  'podsignal_output_usage',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => merchantUsers.id, { onDelete: 'cascade' }),
+    episodeId: uuid('episode_id').references(() => episodes.id, { onDelete: 'set null' }),
+    eventType: text('event_type').notNull(),
+    payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    index('idx_podsignal_output_usage_user').on(table.userId),
+    index('idx_podsignal_output_usage_episode').on(table.episodeId),
+    index('idx_podsignal_output_usage_created').on(table.createdAt),
+  ],
+);
+
+/** Short-token redirect URLs for observed click attribution (guest share, newsletter, social). */
+export const podsignalTrackableLinks = pgTable(
+  'podsignal_trackable_links',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    token: text('token').notNull().unique(),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => merchantUsers.id, { onDelete: 'cascade' }),
+    episodeId: uuid('episode_id')
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'cascade' }),
+    campaignId: uuid('campaign_id')
+      .notNull()
+      .references(() => campaigns.id, { onDelete: 'cascade' }),
+    assetKind: text('asset_kind').notNull(),
+    channel: text('channel'),
+    targetUrl: text('target_url').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    index('idx_podsignal_trackable_links_episode').on(table.episodeId),
+  ],
+);
+
+export const podsignalLinkClicks = pgTable(
+  'podsignal_link_clicks',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    linkId: uuid('link_id')
+      .notNull()
+      .references(() => podsignalTrackableLinks.id, { onDelete: 'cascade' }),
+    clickedAt: timestamp('clicked_at', { withTimezone: true }).notNull().default(sql`now()`),
+    referer: text('referer'),
+  },
+  (table) => [
+    index('idx_podsignal_link_clicks_link').on(table.linkId),
+    index('idx_podsignal_link_clicks_clicked').on(table.clickedAt),
+  ],
+);
+
+/**
+ * Legacy pilot “Analytics” self-reported host metrics (migration 0014).
+ * Prefer `podsignal_performance_snapshots` for new code — explicit evidence_class + campaign linkage.
+ */
+export const podsignalHostMetricSnapshots = pgTable(
+  'podsignal_host_metric_snapshots',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => merchantUsers.id, { onDelete: 'cascade' }),
+    episodeId: uuid('episode_id').references(() => episodes.id, { onDelete: 'set null' }),
+    metricKey: text('metric_key').notNull(),
+    customLabel: text('custom_label'),
+    value: bigint('value', { mode: 'number' }).notNull(),
+    sourceNote: text('source_note').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    index('idx_podsignal_host_metrics_user').on(table.userId),
+    index('idx_podsignal_host_metrics_created').on(table.createdAt),
+  ],
+);
+
+/** First-class generated/selectable launch assets (lineage for evidence graph + reranking). */
+export const podsignalAssetVariants = pgTable(
+  'podsignal_asset_variants',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => merchantUsers.id, { onDelete: 'cascade' }),
+    podcastId: uuid('podcast_id').references(() => podcasts.id, { onDelete: 'cascade' }),
+    episodeId: uuid('episode_id').references(() => episodes.id, { onDelete: 'cascade' }),
+    campaignId: uuid('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
+    assetType: text('asset_type').notNull(),
+    channel: text('channel'),
+    variantKey: text('variant_key').notNull().default(''),
+    contentJson: jsonb('content_json').notNull().default(sql`'{}'::jsonb`),
+    sourceGenerationVersion: text('source_generation_version'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    index('idx_podsignal_asset_variants_owner').on(table.ownerId),
+    index('idx_podsignal_asset_variants_episode').on(table.episodeId),
+    index('idx_podsignal_asset_variants_campaign').on(table.campaignId),
+  ],
+);
+
+/** Canonical time windows for anchoring observed metrics and sponsor reports. */
+export const podsignalLaunchWindows = pgTable(
+  'podsignal_launch_windows',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => merchantUsers.id, { onDelete: 'cascade' }),
+    episodeId: uuid('episode_id')
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'cascade' }),
+    campaignId: uuid('campaign_id').references(() => campaigns.id, { onDelete: 'cascade' }),
+    windowStart: timestamp('window_start', { withTimezone: true }).notNull(),
+    windowEnd: timestamp('window_end', { withTimezone: true }).notNull(),
+    windowType: text('window_type').notNull().default('custom'),
+    status: text('status').notNull().default('active'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [
+    index('idx_podsignal_launch_windows_episode').on(table.episodeId),
+    index('idx_podsignal_launch_windows_owner').on(table.ownerId),
+  ],
+);
+
+/**
+ * Generalized performance snapshots for the Launch Evidence Graph (migration 0017+).
+ * Use for new features; `podsignal_host_metric_snapshots` remains the legacy pilot store.
+ */
+export const podsignalPerformanceSnapshots = pgTable(
+  'podsignal_performance_snapshots',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => merchantUsers.id, { onDelete: 'cascade' }),
+    episodeId: uuid('episode_id').references(() => episodes.id, { onDelete: 'set null' }),
+    campaignId: uuid('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
+    source: text('source').notNull().default('manual'),
+    snapshotType: text('snapshot_type').notNull().default('other'),
+    metricName: text('metric_name').notNull(),
+    metricValue: bigint('metric_value', { mode: 'number' }).notNull(),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull().default(sql`now()`),
+    evidenceClass: text('evidence_class').notNull().default('proxy'),
+    notes: text('notes').notNull().default(''),
+  },
+  (table) => [
+    index('idx_podsignal_perf_snap_episode').on(table.episodeId),
+    index('idx_podsignal_perf_snap_owner').on(table.ownerId),
+  ],
+);
+
+/** Guest / topic tags per episode for amplification signals (estimated tier). */
+export const podsignalGuestTopicLinks = pgTable(
+  'podsignal_guest_topic_links',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    episodeId: uuid('episode_id')
+      .notNull()
+      .references(() => episodes.id, { onDelete: 'cascade' }),
+    guestName: text('guest_name'),
+    guestOrg: text('guest_org'),
+    topicLabel: text('topic_label'),
+    confidence: text('confidence').notNull().default('medium'),
+    source: text('source').notNull().default('manual'),
+  },
+  (table) => [index('idx_podsignal_guest_topic_episode').on(table.episodeId)],
+);
+
+/**
+ * Structured log of sponsor / launch report exports (first-class graph node).
+ * `evidence_scores_json` / `report_identifiers_json` require migration 0018.
+ */
+export const podsignalReportExports = pgTable(
+  'podsignal_report_exports',
+  {
+    id: uuid('id')
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => merchantUsers.id, { onDelete: 'cascade' }),
+    episodeId: uuid('episode_id').references(() => episodes.id, { onDelete: 'set null' }),
+    campaignId: uuid('campaign_id').references(() => campaigns.id, { onDelete: 'set null' }),
+    reportType: text('report_type').notNull().default('sponsor_proof'),
+    exportFormat: text('export_format').notNull(),
+    exportedBy: uuid('exported_by').references(() => merchantUsers.id, { onDelete: 'set null' }),
+    exportedAt: timestamp('exported_at', { withTimezone: true }).notNull().default(sql`now()`),
+    /** Snapshot of WorkspaceEvidenceScores at export time (migration 0018). */
+    evidenceScoresJson: jsonb('evidence_scores_json').notNull().default(sql`'{}'::jsonb`),
+    /** Report kind, rolling window, summary.generatedAt, optional correlation ids. */
+    reportIdentifiersJson: jsonb('report_identifiers_json').notNull().default(sql`'{}'::jsonb`),
+  },
+  (table) => [
+    index('idx_podsignal_report_exports_owner').on(table.ownerId),
+    index('idx_podsignal_report_exports_episode').on(table.episodeId),
+  ],
+);

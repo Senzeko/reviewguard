@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import type { AuthUser } from '../types/auth';
 import { api } from '../api/client';
+import { resetUnauthorizedRedirectGuard } from '../auth/authNavigation';
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -31,20 +32,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [fetchMe]);
 
   const login = async (email: string, password: string) => {
-    const { data } = await api.post('/api/auth/login', { email, password });
+    const { data } = await api.post<AuthUser>('/api/auth/login', { email, password });
     setUser(data);
-    // Refetch to get full user with merchant info
-    await fetchMe();
+    resetUnauthorizedRedirectGuard();
   };
 
   const signup = async (email: string, password: string, fullName: string) => {
-    const { data } = await api.post('/api/auth/signup', { email, password, fullName });
+    const { data } = await api.post<AuthUser>('/api/auth/signup', { email, password, fullName });
     setUser(data);
+    resetUnauthorizedRedirectGuard();
   };
 
   const logout = async () => {
     await api.post('/api/auth/logout');
     setUser(null);
+    resetUnauthorizedRedirectGuard();
   };
 
   return (

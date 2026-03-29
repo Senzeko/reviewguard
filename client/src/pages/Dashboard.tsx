@@ -1,8 +1,13 @@
+/**
+ * ReviewGuard investigations dashboard (legacy console). Not mounted in App.tsx — production /dashboard
+ * uses DashboardPage.tsx. Keep this file for future wiring or ReviewGuard-only deployments.
+ */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { fetchDashboardStats, fetchDashboardInvestigations } from '../api/client';
 import type { DashboardStats, InvestigationSummary } from '../types/auth';
+import { useSseConnection } from '../hooks/useSseConnection';
 
 const STATUS_TABS = [
   { label: 'All', value: '' },
@@ -44,7 +49,6 @@ export function Dashboard() {
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [loading, setLoading] = useState(true);
-  const [sseStatus, setSseStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
   const refreshRef = useRef<() => void>(undefined);
 
   const refreshData = useCallback(() => {
@@ -56,21 +60,23 @@ export function Dashboard() {
 
   refreshRef.current = refreshData;
 
-  // SSE connection for real-time updates
-  useEffect(() => {
-    const es = new EventSource('/api/sse/events', { withCredentials: true });
+  const sseHandlersRef = useRef<Record<string, () => void>>({});
+  sseHandlersRef.current = {
+    'review:new': () => refreshRef.current?.(),
+    'review:scored': () => refreshRef.current?.(),
+    'review:confirmed': () => refreshRef.current?.(),
+    'pdf:ready': () => refreshRef.current?.(),
+    'sync:complete': () => refreshRef.current?.(),
+  };
 
-    es.addEventListener('connected', () => setSseStatus('connected'));
-    es.addEventListener('review:new', () => refreshRef.current?.());
-    es.addEventListener('review:scored', () => refreshRef.current?.());
-    es.addEventListener('review:confirmed', () => refreshRef.current?.());
-    es.addEventListener('pdf:ready', () => refreshRef.current?.());
-    es.addEventListener('sync:complete', () => refreshRef.current?.());
+  const { liveStatus } = useSseConnection({
+    enabled: true,
+    handlersRef: sseHandlersRef,
+    reconnectDeps: [],
+  });
 
-    es.onerror = () => setSseStatus('disconnected');
-
-    return () => { es.close(); };
-  }, []);
+  const sseLabel =
+    liveStatus === 'live' ? 'Live' : liveStatus === 'connecting' ? 'Connecting' : 'Offline';
 
   useEffect(() => {
     fetchDashboardStats().then(setStats).catch(() => {});
@@ -147,13 +153,29 @@ export function Dashboard() {
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#9a3412', fontSize: 12 }}>
-          <span>{user?.merchant?.businessName ?? 'ReviewGuard AI'}</span>
-          <span style={{ color: '#c2410c' }}>
-            {sseStatus === 'connected' ? 'Live' : sseStatus === 'connecting' ? 'Connecting' : 'Offline'}
+          <span>{user?.merchant?.businessName ?? 'PodSignal'}</span>
+          <span style={{ color: '#c2410c' }} title="Same SSE stack as episode pages (reconnect + degraded when offline)">
+            {sseLabel}
           </span>
           <span>{user?.email}</span>
         </div>
       </section>
+
+      {liveStatus === 'degraded' ? (
+        <div
+          style={{
+            background: '#fffbeb',
+            border: '1px solid #fde68a',
+            color: '#92400e',
+            padding: '10px 12px',
+            borderRadius: 8,
+            fontSize: 13,
+          }}
+        >
+          Live updates are unavailable. The list will not refresh automatically — use the browser refresh
+          or change page filter to reload data.
+        </div>
+      ) : null}
 
       <section style={styles.filtersRow}>
         {STATUS_TABS.map((tab) => (

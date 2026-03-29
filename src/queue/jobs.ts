@@ -17,6 +17,7 @@ export enum JobType {
   SYNC_POS_TRANSACTIONS = 'SYNC_POS_TRANSACTIONS',
   PURGE_EXPIRED_NAMES = 'PURGE_EXPIRED_NAMES',
   GENERATE_DISPUTE_PDF = 'GENERATE_DISPUTE_PDF',
+  TRANSCRIBE_EPISODE = 'TRANSCRIBE_EPISODE',
 }
 
 // ── Job payload interfaces ────────────────────────────────────────────────────
@@ -50,12 +51,22 @@ export interface GenerateDisputePdfJob {
   merchantId: string;
 }
 
+export interface TranscribeEpisodeJob {
+  type: JobType.TRANSCRIBE_EPISODE;
+  episodeId: string;
+  /** Workspace merchant id (subscriptions.merchant_id) — used to refund credit on skip/failure. */
+  merchantId?: string;
+}
+
 /** Discriminated union of all job payload types */
 export type ReviewGuardJob =
   | ProcessNewReviewJob
   | SyncPosTransactionsJob
   | PurgeExpiredNamesJob
-  | GenerateDisputePdfJob;
+  | GenerateDisputePdfJob
+  | TranscribeEpisodeJob;
+
+export type AppJob = ReviewGuardJob;
 
 // ── Queue name constants ───────────────────────────────────────────────────────
 
@@ -73,6 +84,8 @@ export const QUEUES = {
   SCHEDULED: 'rg:queue:scheduled',
   /** Dispute PDF generation jobs — consumed by Session 4 */
   PDF: 'rg:queue:pdf',
+  /** PodSignal transcription jobs */
+  PODSIGNAL: 'ps:queue:podsignal',
 } as const;
 
 export type QueueName = keyof typeof QUEUES;

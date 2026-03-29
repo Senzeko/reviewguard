@@ -47,8 +47,9 @@ async function dispatch(job: ReviewGuardJob): Promise<void> {
       return handlePurgeNames();
     case JobType.GENERATE_DISPUTE_PDF:
       return handleGeneratePdf(job);
-    default:
-      console.warn(`[worker] Unknown job type:`, (job as Record<string, unknown>).type);
+    case JobType.TRANSCRIBE_EPISODE:
+      // This queue is handled by the PodSignal worker.
+      return;
   }
 }
 

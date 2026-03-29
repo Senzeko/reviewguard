@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.cursor/
+.env
+.env.local
+evidence_vault/
+media_vault/
+*.log

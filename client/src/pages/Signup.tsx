@@ -1,6 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useState, useRef, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import { getUserFacingApiError } from '../api/userFacingError';
+import { AuthPodSignalBrand } from '../components/AuthPodSignalBrand';
+import '../components/AuthPodSignal.css';
 
 export function Signup() {
   const { signup } = useAuth();
@@ -8,125 +11,178 @@ export function Signup() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
+  const [workspaceName, setWorkspaceName] = useState('');
+  const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const submitLockRef = useRef(false);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (password !== confirm) {
-      setError('Passwords do not match');
-      return;
-    }
     if (password.length < 8) {
       setError('Password must be at least 8 characters');
       return;
     }
 
+    if (submitLockRef.current || loading) return;
+    submitLockRef.current = true;
     setLoading(true);
     try {
+      if (workspaceName.trim()) {
+        try {
+          sessionStorage.setItem('podsignal_workspace_name', workspaceName.trim());
+        } catch {
+          /* ignore */
+        }
+      }
       await signup(email, password, fullName);
       navigate('/onboarding');
-    } catch (err: any) {
-      setError(err.response?.data?.error ?? 'Signup failed');
+    } catch (err: unknown) {
+      setError(getUserFacingApiError(err, 'Could not create account'));
     } finally {
       setLoading(false);
+      submitLockRef.current = false;
     }
   };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>ReviewGuard AI</h1>
-        <p style={styles.subtitle}>Create your account</p>
+    <div className="auth-ps-split">
+      <div className="auth-ps-split-left">
+        <AuthPodSignalBrand variant="inline" />
+        <h1 className="auth-ps-split-title" style={{ marginTop: 20 }}>
+          Join PodSignal
+        </h1>
+        <p className="auth-ps-split-sub">Closed beta — launch episodes with clear, observed metrics.</p>
+        <span className="auth-ps-badge">Podcaster access</span>
 
-        <form onSubmit={handleSubmit} style={styles.form}>
-          {error && <div style={styles.error}>{error}</div>}
+        <p className="auth-ps-split-sub" style={{ marginTop: 16, marginBottom: 8 }}>
+          Use the email you want for sign-in. You&apos;ll name your show on the next step.
+        </p>
 
-          <label style={styles.label}>
+        <form onSubmit={handleSubmit}>
+          {error ? <div className="auth-ps-error">{error}</div> : null}
+
+          <label className="auth-ps-label" htmlFor="su-name">
             Full name
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              required
-              style={styles.input}
-              placeholder="Tony Montana"
-            />
           </label>
+          <input
+            id="su-name"
+            className="auth-ps-input"
+            style={{ marginBottom: 14 }}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            required
+            autoComplete="name"
+            placeholder="Enter your full name"
+          />
 
-          <label style={styles.label}>
-            Email
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              style={styles.input}
-              placeholder="you@business.com"
-            />
+          <label className="auth-ps-label" htmlFor="su-email">
+            Work email
           </label>
+          <input
+            id="su-email"
+            className="auth-ps-input"
+            style={{ marginBottom: 14 }}
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoComplete="email"
+            placeholder="you@company.com"
+          />
 
-          <label style={styles.label}>
+          <label className="auth-ps-label" htmlFor="su-pw">
             Password
+          </label>
+          <div className="auth-ps-input-wrap">
             <input
-              type="password"
+              id="su-pw"
+              type={showPw ? 'text' : 'password'}
+              className="auth-ps-input"
+              style={{ paddingRight: 40, marginBottom: 0 }}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              style={styles.input}
-              placeholder="Min 8 characters"
+              minLength={8}
+              autoComplete="new-password"
+              placeholder="Create a password (8+ characters)"
             />
-          </label>
+            <button
+              type="button"
+              className="auth-ps-toggle-eye"
+              onClick={() => setShowPw(!showPw)}
+              aria-label={showPw ? 'Hide password' : 'Show password'}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+            </button>
+          </div>
+          <p style={{ fontSize: 12, color: '#6b7280', margin: '6px 0 14px' }}>Must be at least 8 characters</p>
 
-          <label style={styles.label}>
-            Confirm password
-            <input
-              type="password"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              required
-              style={styles.input}
-            />
+          <label className="auth-ps-label" htmlFor="su-ws">
+            Show name <span style={{ fontWeight: 400, color: '#6b7280' }}>(optional)</span>
           </label>
+          <input
+            id="su-ws"
+            className="auth-ps-input"
+            style={{ marginBottom: 18 }}
+            value={workspaceName}
+            onChange={(e) => setWorkspaceName(e.target.value)}
+            placeholder="Saves time on the next screen"
+          />
 
-          <button type="submit" disabled={loading} style={styles.btn}>
-            {loading ? 'Creating account...' : 'Create account'}
+          <button type="submit" className="auth-ps-btn" disabled={loading}>
+            {loading ? 'Creating…' : 'Create account'}
           </button>
         </form>
 
-        <p style={styles.footer}>
-          Already have an account? <Link to="/login" style={styles.link}>Sign in</Link>
+        <p className="auth-ps-footer" style={{ marginTop: 16 }}>
+          By signing up, you agree to our{' '}
+          <a href="/terms" style={{ color: '#2563eb' }}>
+            Terms of Service
+          </a>{' '}
+          and{' '}
+          <a href="/privacy" style={{ color: '#2563eb' }}>
+            Privacy Policy
+          </a>
         </p>
+        <p className="auth-ps-footer">
+          Already have an account?{' '}
+          <Link to="/login" style={{ color: '#2563eb', fontWeight: 600 }}>
+            Sign in
+          </Link>
+        </p>
+      </div>
+
+      <div className="auth-ps-split-right">
+        <h2 className="auth-ps-split-title">Built for podcast launches</h2>
+        <p className="auth-ps-split-sub">One place for assets, trackable links, and honest launch proof.</p>
+
+        {[
+          { t: 'Episode → launch workflow', d: 'Titles, clips, copy, and approvals in one thread.' },
+          { t: 'Trackable short links', d: 'Observed clicks on your PodSignal links — not host vanity metrics.' },
+          { t: 'Launch proof you can share', d: 'Export what happened in-product, labeled by evidence type.' },
+          { t: 'No retail POS setup', d: 'This beta path skips old review / POS onboarding entirely.' },
+        ].map((f, i) => (
+          <div key={f.t} className="auth-ps-feature">
+            <div className="auth-ps-feature-icon">{i + 1}</div>
+            <div>
+              <h3>{f.t}</h3>
+              <p>{f.d}</p>
+            </div>
+          </div>
+        ))}
+
+        <div className="auth-ps-trust">
+          <span>✓ Closed beta</span>
+          <span>✓ Email sign-in</span>
+          <span>✓ Founder-supported</span>
+        </div>
       </div>
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-    minHeight: '100vh',
-    background: '#f5f5f4',
-  },
-  card: {
-    background: 'white',
-    borderRadius: 12,
-    padding: 40,
-    width: 400,
-    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-  },
-  title: { fontSize: 24, fontWeight: 700, color: '#1F4E79', marginBottom: 4 },
-  subtitle: { color: '#888', fontSize: 14, marginBottom: 24 },
-  form: { display: 'flex', flexDirection: 'column', gap: 16 },
-  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 14, fontWeight: 500, color: '#444' },
-  input: { padding: '10px 12px', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 14, outline: 'none' },
-  btn: { padding: '12px', background: '#1F4E79', color: 'white', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer', marginTop: 8 },
-  error: { background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 8, fontSize: 14 },
-  footer: { textAlign: 'center', marginTop: 20, fontSize: 14, color: '#888' },
-  link: { color: '#1F4E79', fontWeight: 600, textDecoration: 'none' },
-};

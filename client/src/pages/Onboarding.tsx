@@ -1,298 +1,212 @@
-import { useState, useEffect, type FormEvent } from 'react';
+import { useState, useEffect, useRef, type FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import {
-  fetchOnboardingState,
-  updateOnboardingBusiness,
-  updateOnboardingPos,
-  updateOnboardingGoogle,
-  finalizeOnboarding,
-} from '../api/client';
+import { fetchOnboardingState, finalizePodsignalOnboarding } from '../api/client';
+import { loadDraft, removeDraft, saveDraft } from '../lib/draftStorage';
+import { AuthPodSignalBrand } from '../components/AuthPodSignalBrand';
+import '../components/AuthPodSignal.css';
 
-const STEPS = ['Business', 'POS', 'Google', 'Review'];
+const SIGNUP_WORKSPACE_KEY = 'podsignal_workspace_name';
 
 export function Onboarding() {
   const { refetchUser } = useAuth();
   const navigate = useNavigate();
-  const [step, setStep] = useState(1);
+  const [workspaceName, setWorkspaceName] = useState('');
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
-  // Step 1
-  const [businessName, setBusinessName] = useState('');
-  // Step 2
-  const [posProvider, setPosProvider] = useState<'SQUARE' | 'CLOVER'>('SQUARE');
-  const [posApiKey, setPosApiKey] = useState('');
-  const [cloverMerchantId, setCloverMerchantId] = useState('');
-  // Step 3
-  const [googlePlaceId, setGooglePlaceId] = useState('');
-  // Step 4
-  const [result, setResult] = useState<{
-    merchantId: string;
-    webhookSecret: string;
-    webhookUrl: string;
-  } | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const submitLockRef = useRef(false);
 
   useEffect(() => {
     fetchOnboardingState()
       .then((state) => {
         if (state.completedAt) {
-          navigate('/dashboard');
+          navigate('/dashboard', { replace: true });
           return;
         }
-        setStep(state.currentStep);
-        if (state.businessName) setBusinessName(state.businessName);
-        if (state.posProvider) setPosProvider(state.posProvider as 'SQUARE' | 'CLOVER');
-        if (state.googlePlaceId) setGooglePlaceId(state.googlePlaceId);
-        if (state.cloverMerchantId) setCloverMerchantId(state.cloverMerchantId);
+        if (state.businessName) {
+          setWorkspaceName(state.businessName);
+          return;
+        }
+        const d = loadDraft<{ workspaceName: string }>('onboarding_workspace');
+        if (d?.value.workspaceName?.trim()) {
+          setWorkspaceName(d.value.workspaceName);
+          setDraftRestored(true);
+          return;
+        }
+        try {
+          const fromSignup = sessionStorage.getItem(SIGNUP_WORKSPACE_KEY)?.trim();
+          if (fromSignup) {
+            setWorkspaceName(fromSignup);
+            setDraftRestored(true);
+          }
+        } catch {
+          /* private mode */
+        }
       })
-      .catch(() => {})
+      .catch(() => {
+        /* offline or unexpected — still allow submit if user types a name */
+      })
       .finally(() => setLoading(false));
   }, [navigate]);
 
-  const handleStep1 = async (e: FormEvent) => {
-    e.preventDefault();
-    setError('');
-    try {
-      await updateOnboardingBusiness(businessName);
-      setStep(2);
-    } catch (err: any) {
-      setError(err.response?.data?.error ?? 'Failed');
-    }
-  };
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      const n = workspaceName.trim();
+      if (n.length >= 2) saveDraft('onboarding_workspace', { workspaceName: n });
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [workspaceName]);
 
-  const handleStep2 = async (e: FormEvent) => {
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setError('');
-    try {
-      await updateOnboardingPos(posProvider, posApiKey, posProvider === 'CLOVER' ? cloverMerchantId : undefined);
-      setStep(3);
-    } catch (err: any) {
-      setError(err.response?.data?.error ?? 'Failed');
+    const name = workspaceName.trim();
+    if (name.length < 2) {
+      setError('Enter at least 2 characters');
+      return;
     }
-  };
-
-  const handleStep3 = async (e: FormEvent) => {
-    e.preventDefault();
+    if (submitLockRef.current) return;
+    submitLockRef.current = true;
+    setSaving(true);
     setError('');
     try {
-      await updateOnboardingGoogle(googlePlaceId);
-      setStep(4);
-    } catch (err: any) {
-      setError(err.response?.data?.error ?? 'Failed');
-    }
-  };
-
-  const handleFinalize = async () => {
-    setError('');
-    try {
-      const res = await finalizeOnboarding();
-      setResult(res);
+      await finalizePodsignalOnboarding({ workspaceName: name });
+      removeDraft('onboarding_workspace');
+      try {
+        sessionStorage.removeItem(SIGNUP_WORKSPACE_KEY);
+      } catch {
+        /* */
+      }
       await refetchUser();
-    } catch (err: any) {
-      setError(err.response?.data?.error ?? 'Failed to finalize');
+      navigate('/shows', { replace: true });
+    } catch (err: unknown) {
+      const er = err as { response?: { data?: { error?: string } } };
+      setError(er.response?.data?.error ?? 'Could not finish setup. Try again.');
+    } finally {
+      setSaving(false);
+      submitLockRef.current = false;
     }
   };
 
   if (loading) {
-    return <div style={{ padding: 40, textAlign: 'center', color: '#888' }}>Loading...</div>;
+    return (
+      <div style={styles.container}>
+        <div style={{ color: 'var(--ps-muted)', fontSize: 15 }}>Loading…</div>
+      </div>
+    );
   }
 
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        <h1 style={styles.title}>Set up your business</h1>
+        <AuthPodSignalBrand variant="inline" />
+        <h1 style={styles.title}>Almost there</h1>
+        <p style={styles.lead}>
+          Name your show or network. You&apos;ll add episodes and launch assets next — nothing here connects to reviews or
+          POS; it&apos;s just your label in PodSignal.
+        </p>
 
-        {/* Step indicator */}
-        <div style={styles.steps}>
-          {STEPS.map((label, i) => (
-            <div key={label} style={styles.stepRow}>
-              <div
-                style={{
-                  ...styles.circle,
-                  background: step > i + 1 ? '#1D9E75' : step === i + 1 ? '#1F4E79' : '#d1d1d1',
-                  color: step >= i + 1 ? 'white' : '#888',
-                }}
-              >
-                {step > i + 1 ? '\u2713' : i + 1}
-              </div>
-              <span style={{ fontSize: 13, color: step === i + 1 ? '#1F4E79' : '#888' }}>{label}</span>
-              {i < 3 && <div style={styles.line} />}
+        <form onSubmit={handleSubmit} style={styles.form}>
+          {error ? <div style={styles.error}>{error}</div> : null}
+          {draftRestored ? (
+            <div style={styles.hintBanner}>
+              We pulled in a name from sign-up or your saved draft. You can edit it before continuing.
+              <button type="button" onClick={() => setDraftRestored(false)} style={styles.hintDismiss}>
+                Dismiss
+              </button>
             </div>
-          ))}
-        </div>
+          ) : null}
 
-        {error && <div style={styles.error}>{error}</div>}
+          <label style={styles.label}>
+            Show or workspace name
+            <input
+              type="text"
+              value={workspaceName}
+              onChange={(e) => setWorkspaceName(e.target.value)}
+              required
+              minLength={2}
+              autoFocus
+              style={styles.input}
+              placeholder="e.g. The Morning Brief"
+            />
+          </label>
 
-        {/* Step 1: Business name */}
-        {step === 1 && (
-          <form onSubmit={handleStep1} style={styles.form}>
-            <label style={styles.label}>
-              Business name
-              <input
-                type="text"
-                value={businessName}
-                onChange={(e) => setBusinessName(e.target.value)}
-                required
-                style={styles.input}
-                placeholder="Tony's Pizzeria"
-              />
-            </label>
-            <button type="submit" style={styles.btn}>Next</button>
-          </form>
-        )}
+          <p style={styles.microcopy}>Closed beta: your host can help if anything looks wrong.</p>
 
-        {/* Step 2: POS connection */}
-        {step === 2 && (
-          <form onSubmit={handleStep2} style={styles.form}>
-            <label style={styles.label}>
-              POS Provider
-              <select
-                value={posProvider}
-                onChange={(e) => setPosProvider(e.target.value as 'SQUARE' | 'CLOVER')}
-                style={styles.input}
-              >
-                <option value="SQUARE">Square</option>
-                <option value="CLOVER">Clover</option>
-              </select>
-            </label>
-
-            <label style={styles.label}>
-              API Key / Access Token
-              <input
-                type="password"
-                value={posApiKey}
-                onChange={(e) => setPosApiKey(e.target.value)}
-                required
-                style={styles.input}
-                placeholder={posProvider === 'SQUARE' ? 'Square access token' : 'Clover API key'}
-              />
-              <span style={styles.help}>
-                {posProvider === 'SQUARE'
-                  ? 'Find this in Square Developer Dashboard > OAuth > Access Token'
-                  : 'Find this in Clover Developer Dashboard > API Tokens'}
-              </span>
-            </label>
-
-            {posProvider === 'CLOVER' && (
-              <label style={styles.label}>
-                Clover Merchant ID
-                <input
-                  type="text"
-                  value={cloverMerchantId}
-                  onChange={(e) => setCloverMerchantId(e.target.value)}
-                  required
-                  style={styles.input}
-                  placeholder="e.g. ABC123DEF456"
-                />
-              </label>
-            )}
-
-            <div style={styles.btnRow}>
-              <button type="button" onClick={() => setStep(1)} style={styles.btnSecondary}>Back</button>
-              <button type="submit" style={styles.btn}>Next</button>
-            </div>
-          </form>
-        )}
-
-        {/* Step 3: Google Place ID */}
-        {step === 3 && (
-          <form onSubmit={handleStep3} style={styles.form}>
-            <label style={styles.label}>
-              Google Place ID
-              <input
-                type="text"
-                value={googlePlaceId}
-                onChange={(e) => setGooglePlaceId(e.target.value)}
-                required
-                style={styles.input}
-                placeholder="ChIJ..."
-              />
-              <span style={styles.help}>
-                Find your Place ID at{' '}
-                <a href="https://developers.google.com/maps/documentation/places/web-service/place-id" target="_blank" rel="noopener noreferrer" style={{ color: '#1F4E79' }}>
-                  Google's Place ID Finder
-                </a>
-              </span>
-            </label>
-
-            <div style={styles.btnRow}>
-              <button type="button" onClick={() => setStep(2)} style={styles.btnSecondary}>Back</button>
-              <button type="submit" style={styles.btn}>Next</button>
-            </div>
-          </form>
-        )}
-
-        {/* Step 4: Review & Confirm */}
-        {step === 4 && !result && (
-          <div style={styles.form}>
-            <h3 style={{ fontSize: 16, marginBottom: 12 }}>Review your setup</h3>
-            <div style={styles.summary}>
-              <div><strong>Business:</strong> {businessName}</div>
-              <div><strong>POS:</strong> {posProvider}</div>
-              <div><strong>Google Place ID:</strong> {googlePlaceId}</div>
-              {posProvider === 'CLOVER' && <div><strong>Clover Merchant:</strong> {cloverMerchantId}</div>}
-            </div>
-
-            <div style={styles.btnRow}>
-              <button type="button" onClick={() => setStep(3)} style={styles.btnSecondary}>Back</button>
-              <button type="button" onClick={handleFinalize} style={styles.btn}>Complete Setup</button>
-            </div>
-          </div>
-        )}
-
-        {/* Success */}
-        {result && (
-          <div style={styles.form}>
-            <div style={styles.success}>
-              <h3>Setup complete!</h3>
-              <p>Your business is now connected to ReviewGuard AI.</p>
-            </div>
-
-            <div style={styles.webhookInfo}>
-              <h4 style={{ fontSize: 14, marginBottom: 8 }}>Webhook Configuration</h4>
-              <p style={{ fontSize: 13, color: '#595959', marginBottom: 8 }}>
-                To start monitoring reviews, configure your Google Business Profile to send
-                review notifications to this endpoint:
-              </p>
-              <div style={styles.codeBlock}>
-                <div><strong>URL:</strong> https://your-domain.com{result.webhookUrl}</div>
-                <div><strong>Secret:</strong> {result.webhookSecret.slice(0, 16)}...</div>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => navigate('/dashboard')}
-              style={styles.btn}
-            >
-              Go to Dashboard
-            </button>
-          </div>
-        )}
+          <button type="submit" disabled={saving} style={styles.btn}>
+            {saving ? 'Saving…' : 'Continue to shows'}
+          </button>
+        </form>
       </div>
     </div>
   );
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  container: { display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', background: '#f5f5f4' },
-  card: { background: 'white', borderRadius: 12, padding: 40, width: 480, boxShadow: '0 1px 3px rgba(0,0,0,0.1)' },
-  title: { fontSize: 22, fontWeight: 700, color: '#1F4E79', marginBottom: 20 },
-  steps: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
-  stepRow: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flex: 1 },
-  circle: { width: 28, height: 28, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, fontWeight: 600 },
-  line: { width: '100%', height: 2, background: '#e0e0e0', marginTop: -18 },
+  container: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    minHeight: '100vh',
+    background: 'var(--ps-bg)',
+    fontFamily: 'var(--font-sans, Inter, system-ui, sans-serif)',
+  },
+  card: {
+    background: 'var(--ps-surface)',
+    borderRadius: 12,
+    padding: 40,
+    width: '100%',
+    maxWidth: 440,
+    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+    border: '1px solid var(--ps-border)',
+  },
+  title: { fontSize: 22, fontWeight: 700, color: 'var(--ps-text)', marginBottom: 12, marginTop: 16 },
+  lead: { fontSize: 15, color: 'var(--ps-muted)', lineHeight: 1.55, marginBottom: 22 },
   form: { display: 'flex', flexDirection: 'column', gap: 16 },
-  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 14, fontWeight: 500, color: '#444' },
-  input: { padding: '10px 12px', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 14, outline: 'none' },
-  help: { fontSize: 12, color: '#888', marginTop: 2 },
-  btn: { padding: '12px', background: '#1F4E79', color: 'white', border: 'none', borderRadius: 8, fontSize: 15, fontWeight: 600, cursor: 'pointer' },
-  btnSecondary: { padding: '12px', background: 'white', color: '#444', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 15, cursor: 'pointer' },
-  btnRow: { display: 'flex', gap: 12 },
-  error: { background: '#fef2f2', color: '#dc2626', padding: '10px 14px', borderRadius: 8, fontSize: 14, marginBottom: 8 },
-  summary: { background: '#f8f8f7', padding: 16, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 8, fontSize: 14 },
-  success: { background: '#f0fdf4', padding: 16, borderRadius: 8, color: '#166534', textAlign: 'center' },
-  webhookInfo: { background: '#f8f8f7', padding: 16, borderRadius: 8 },
-  codeBlock: { background: '#1a1a1a', color: '#4ade80', padding: 12, borderRadius: 6, fontSize: 12, fontFamily: 'monospace', display: 'flex', flexDirection: 'column', gap: 4 },
+  label: { display: 'flex', flexDirection: 'column', gap: 6, fontSize: 14, fontWeight: 600, color: 'var(--ps-text)' },
+  input: {
+    padding: '10px 12px',
+    border: '1px solid var(--ps-border)',
+    borderRadius: 8,
+    fontSize: 15,
+    outline: 'none',
+  },
+  btn: {
+    padding: '12px',
+    background: 'var(--ps-primary)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: 8,
+    fontSize: 15,
+    fontWeight: 600,
+    cursor: 'pointer',
+    marginTop: 4,
+  },
+  error: {
+    background: '#fef2f2',
+    color: '#b91c1c',
+    padding: '10px 14px',
+    borderRadius: 8,
+    fontSize: 14,
+  },
+  hintBanner: {
+    background: '#ecfdf5',
+    border: '1px solid #6ee7b7',
+    color: '#065f46',
+    padding: '10px 12px',
+    borderRadius: 8,
+    fontSize: 13,
+    lineHeight: 1.45,
+  },
+  hintDismiss: {
+    marginLeft: 10,
+    padding: '2px 8px',
+    fontSize: 12,
+    cursor: 'pointer',
+    borderRadius: 6,
+    border: '1px solid #059669',
+    background: '#fff',
+  },
+  microcopy: { fontSize: 12, color: 'var(--ps-muted)', margin: 0, lineHeight: 1.4 },
 };

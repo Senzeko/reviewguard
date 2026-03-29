@@ -1,0 +1,12 @@
+# Railway — https://docs.railway.com/guides/config-as-code
+# Set variables in the Railway dashboard: DATABASE_URL, REDIS_URL, ENCRYPTION_KEY,
+# ANTHROPIC_API_KEY, APP_URL (https://your-service.up.railway.app or custom domain), etc.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"

@@ -1,15 +1,16 @@
 /**
  * src/server/routes/onboarding.ts
  *
- * Multi-step onboarding wizard: business → POS → Google → finalize.
+ * Legacy multi-step wizard (POS / Google) plus PodSignal one-step workspace setup.
  */
 
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { randomBytes } from 'crypto';
+import { randomBytes, randomUUID } from 'crypto';
 import axios from 'axios';
 import { db } from '../../db/index.js';
-import { onboardingState, merchants, merchantUsers } from '../../db/schema.js';
+import { onboardingState, merchants, merchantUsers, subscriptions } from '../../db/schema.js';
+import { utcMonthKey } from '../../billing/processingQuota.js';
 import { encrypt } from '../../secrets/index.js';
 import { enqueue, JobType } from '../../queue/jobs.js';
 import { env } from '../../env.js';
@@ -235,5 +236,73 @@ export async function onboardingRoutes(fastify: FastifyInstance): Promise<void> 
       webhookSecret,
       webhookUrl: '/webhooks/google-review',
     });
+  });
+
+  /**
+   * PodSignal: create workspace (merchant) without POS/Google — placeholder POS credentials only.
+   */
+  fastify.post<{
+    Body: { workspaceName: string };
+  }>('/finalize-podsignal', async (request, reply) => {
+    if (!request.user) return reply.status(401).send({ error: 'Not authenticated' });
+
+    const workspaceName = request.body?.workspaceName?.trim() ?? '';
+    if (workspaceName.length < 2) {
+      return reply.status(400).send({ error: 'Workspace name must be at least 2 characters' });
+    }
+
+    const state = await getState(request.user.userId);
+    if (!state) return reply.status(404).send({ error: 'No onboarding state' });
+    if (state.completedAt) return reply.status(409).send({ error: 'Onboarding already completed' });
+
+    const googlePlaceId = `podsig_${randomUUID().replace(/-/g, '')}`;
+    const placeholderKey = 'podsignal-placeholder-not-used';
+    const encrypted = encrypt(placeholderKey);
+    const webhookSecret = randomBytes(32).toString('hex');
+
+    const [merchant] = await db
+      .insert(merchants)
+      .values({
+        googlePlaceId,
+        businessName: workspaceName,
+        posProvider: 'SQUARE',
+        posApiKeyEnc: encrypted.ciphertext,
+        posApiKeyIv: encrypted.iv,
+        posApiKeyTag: encrypted.tag,
+        webhookSecret,
+        cloverMerchantId: null,
+      })
+      .returning({ id: merchants.id });
+
+    await db
+      .update(merchantUsers)
+      .set({ merchantId: merchant!.id, updatedAt: new Date() })
+      .where(eq(merchantUsers.id, request.user.userId));
+
+    await db
+      .update(onboardingState)
+      .set({
+        businessName: workspaceName,
+        completedAt: new Date(),
+        updatedAt: new Date(),
+        currentStep: 4,
+      })
+      .where(eq(onboardingState.userId, request.user.userId));
+
+    try {
+      await db.insert(subscriptions).values({
+        merchantId: merchant!.id,
+        stripeCustomerId: null,
+        plan: 'free',
+        status: 'active',
+        reviewLimit: 25,
+        reviewsUsed: 0,
+        processingQuotaPeriodKey: utcMonthKey(),
+      });
+    } catch {
+      /* concurrent finalize or legacy row */
+    }
+
+    return reply.send({ merchantId: merchant!.id });
   });
 }

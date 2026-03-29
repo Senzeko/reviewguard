@@ -1,22 +1,19 @@
 /**
  * src/index.ts
  *
- * ReviewGuard AI — application entry point.
+ * PodSignal — application entry point.
  *
  * Startup order:
  *   1. Validate env and encryption key
  *   2. Connect Postgres and Redis
- *   3. Start job queue worker (Session 2)
- *   4. Start engine worker (Session 3)
- *   5. Start scheduler (Session 2)
- *   6. Start HTTP server (Session 2)
+ *   3. Start PodSignal worker
+ *   4. Start HTTP server
  *
  * Shutdown order (SIGTERM / SIGINT):
- *   1. Stop scheduler
- *   2. Stop workers
- *   3. Stop HTTP server
- *   4. Drain Postgres pool
- *   5. Close Redis
+ *   1. Stop worker
+ *   2. Stop HTTP server
+ *   3. Drain Postgres pool
+ *   4. Close Redis
  */
 
 // env MUST be the first import — it validates all env vars and exits on failure
@@ -25,42 +22,34 @@ import { validateEncryptionKey } from './secrets/index.js';
 import { pool, closeDb } from './db/index.js';
 import { connectRedis, closeRedis, isRedisHealthy } from './queue/client.js';
 import { startServer, stopServer } from './server/index.js';
-import { startWorker, stopWorker } from './worker/index.js';
-import { startEngineWorker, stopEngineWorker } from './engine/worker.js';
-import { startScheduler, stopScheduler } from './scheduler/index.js';
+import { startPodsignalWorker, stopPodsignalWorker } from './worker/podsignalWorker.js';
 
 // ── Startup ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  console.log('[ReviewGuard] Booting\u2026 (NODE_ENV=%s)', env.NODE_ENV);
+  console.log('[PodSignal] Booting… (NODE_ENV=%s)', env.NODE_ENV);
 
   // 1. Validate encryption key
   validateEncryptionKey();
-  console.log('[ReviewGuard] \u2713 Encryption key validated');
+  console.log('[PodSignal] ✓ Encryption key validated');
 
   // 2. Connect Postgres
   const client = await pool.connect();
   await client.query('SELECT 1');
   client.release();
-  console.log('[ReviewGuard] \u2713 Postgres connected (pool min=2, max=10)');
+  console.log('[PodSignal] ✓ Postgres connected (pool min=2, max=10)');
 
   // 3. Connect Redis
   await connectRedis();
-  console.log('[ReviewGuard] \u2713 Redis connected (healthy=%s)', isRedisHealthy());
+  console.log('[PodSignal] ✓ Redis connected (healthy=%s)', isRedisHealthy());
 
-  // 4. Start job queue worker
-  startWorker();
+  // 4. Start PodSignal queue worker
+  startPodsignalWorker();
 
-  // 5. Start engine worker
-  await startEngineWorker();
-
-  // 6. Start scheduler
-  startScheduler();
-
-  // 7. Start HTTP server
+  // 5. Start HTTP server
   await startServer();
 
-  console.log('\n[ReviewGuard] \u2705  ReviewGuard AI \u2014 ingress gateway ready\n');
+  console.log('\n[PodSignal] ✅  PodSignal — API server ready\n');
   console.log('  DATABASE_URL : %s', env.DATABASE_URL.replace(/:\/\/[^@]+@/, '://***@'));
   console.log('  REDIS_URL    : %s', env.REDIS_URL);
   console.log('  PORT         : %d', env.PORT);
@@ -75,34 +64,31 @@ async function shutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  console.log(`\n[ReviewGuard] Received ${signal} \u2014 shutting down gracefully\u2026`);
-
-  stopScheduler();
-  stopWorker();
-  stopEngineWorker();
+  console.log(`\n[PodSignal] Received ${signal} — shutting down gracefully…`);
+  stopPodsignalWorker();
 
   try {
     await stopServer();
-    console.log('[ReviewGuard] \u2713 HTTP server closed');
+    console.log('[PodSignal] ✓ HTTP server closed');
   } catch (err) {
-    console.error('[ReviewGuard] Error closing HTTP server:', err);
+    console.error('[PodSignal] Error closing HTTP server:', err);
   }
 
   try {
     await closeDb();
-    console.log('[ReviewGuard] \u2713 Postgres pool drained');
+    console.log('[PodSignal] ✓ Postgres pool drained');
   } catch (err) {
-    console.error('[ReviewGuard] Error draining Postgres pool:', err);
+    console.error('[PodSignal] Error draining Postgres pool:', err);
   }
 
   try {
     await closeRedis();
-    console.log('[ReviewGuard] \u2713 Redis connection closed');
+    console.log('[PodSignal] ✓ Redis connection closed');
   } catch (err) {
-    console.error('[ReviewGuard] Error closing Redis connection:', err);
+    console.error('[PodSignal] Error closing Redis connection:', err);
   }
 
-  console.log('[ReviewGuard] Goodbye.');
+  console.log('[PodSignal] Goodbye.');
   process.exit(0);
 }
 
@@ -112,6 +98,6 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 // ── Run ────────────────────────────────────────────────────────────────────────
 
 main().catch((err: unknown) => {
-  console.error('[ReviewGuard] Fatal startup error:', err);
+  console.error('[PodSignal] Fatal startup error:', err);
   process.exit(1);
 });

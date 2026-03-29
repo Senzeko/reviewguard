@@ -1,49 +1,31 @@
-# ── Stage 1: Dependencies ─────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
-WORKDIR /app
-COPY package*.json ./
-COPY client/package*.json ./client/
-RUN npm ci --omit=dev
-RUN cd client && npm ci --omit=dev
+# PodSignal — production image (API + Vite client served from Fastify)
+# Build: docker build -t podsignal .
+# Run:  docker run -p 3000:3000 --env-file .env podsignal
 
-# ── Stage 2: Build ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS build
+FROM node:20-alpine AS builder
 WORKDIR /app
-COPY package*.json ./
-COPY client/package*.json ./client/
-RUN npm ci
-RUN cd client && npm ci
+
+COPY package.json package-lock.json ./
+COPY client/package.json client/package-lock.json ./client/
+RUN npm ci && cd client && npm ci
+
 COPY . .
-RUN npm run build
-RUN cd client && npm run build
+RUN npm run build:server && npm run client:build
 
-# ── Stage 3: Production ──────────────────────────────────────────────────────
-FROM node:20-alpine AS production
+FROM node:20-alpine AS runner
 WORKDIR /app
-
-# Install wget for healthcheck
-RUN apk add --no-cache wget
-
 ENV NODE_ENV=production
 
-COPY --from=deps /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/client/dist ./client/dist
-COPY --from=build /app/migrations ./migrations
-COPY --from=build /app/drizzle.config.ts ./drizzle.config.ts
-COPY package.json ./
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 
-RUN mkdir -p /app/evidence_vault
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/client/dist ./client/dist
+COPY --from=builder /app/migrations ./migrations
+COPY --from=builder /app/drizzle.config.ts ./
+COPY --from=builder /app/src/db/schema.ts ./src/db/schema.ts
 
-# Non-root user for security
-RUN addgroup -g 1001 -S reviewguard && \
-    adduser -S reviewguard -u 1001 -G reviewguard && \
-    chown -R reviewguard:reviewguard /app
-USER reviewguard
+RUN mkdir -p evidence_vault media_vault
 
 EXPOSE 3000
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:3000/health || exit 1
-
 CMD ["node", "dist/index.js"]

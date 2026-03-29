@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { getUserFacingApiError } from '../api/userFacingError';
 
 interface BillingStatus {
   plan: string;
@@ -17,30 +18,31 @@ interface BillingStatus {
   };
 }
 
+/** User-facing quota copy. API still uses reviewLimit/reviewsUsed until billing schema is renamed. */
 const PLANS = [
   {
     id: 'free',
     name: 'Free',
     price: '$0',
     period: '/mo',
-    reviews: '25 reviews/mo',
-    features: ['Basic forensic matching', 'Single location', 'Email notifications'],
+    quotaLabel: '25 episode processing credits/mo',
+    features: ['1 show', 'Basic episode processing', 'Launch checklist', 'Email notifications'],
   },
   {
     id: 'starter',
     name: 'Starter',
     price: '$49',
     period: '/mo',
-    reviews: '100 reviews/mo',
-    features: ['Everything in Free', 'PDF dispute export', 'Priority scoring', 'Team members (3)'],
+    quotaLabel: '100 episode processing credits/mo',
+    features: ['Everything in Free', 'Campaign board & export', 'Transcription (quota)', 'Team seats (3)'],
   },
   {
     id: 'pro',
     name: 'Pro',
     price: '$149',
     period: '/mo',
-    reviews: '500 reviews/mo',
-    features: ['Everything in Starter', 'Multi-location', 'Analytics dashboard', 'API access', 'Team members (10)'],
+    quotaLabel: '500 episode processing credits/mo',
+    features: ['Everything in Starter', 'Multi-show', 'Growth analytics', 'API access', 'Team seats (10)'],
     popular: true,
   },
   {
@@ -48,8 +50,8 @@ const PLANS = [
     name: 'Enterprise',
     price: '$399',
     period: '/mo',
-    reviews: '5,000 reviews/mo',
-    features: ['Everything in Pro', 'Unlimited locations', 'Dedicated support', 'Custom integrations', 'Unlimited team'],
+    quotaLabel: '5,000 episode processing credits/mo',
+    features: ['Everything in Pro', 'Unlimited shows (fair use)', 'Dedicated support', 'Custom integrations'],
   },
 ];
 
@@ -70,45 +72,111 @@ export function Billing() {
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [loading, setLoading] = useState('');
   const [connectLoading, setConnectLoading] = useState(false);
+  const [returnBanner, setReturnBanner] = useState<'none' | 'pending' | 'success' | 'canceled'>('none');
+  const [statusError, setStatusError] = useState('');
+  const checkoutLockRef = useRef(false);
+  const portalLockRef = useRef(false);
+  const checkoutReturnPollStarted = useRef(false);
 
   const connectQuery = searchParams.get('connect');
   useEffect(() => {
-    api.get('/api/billing/status').then(r => setBilling(r.data)).catch(() => {});
+    setStatusError('');
+    api
+      .get('/api/billing/status')
+      .then((r) => setBilling(r.data))
+      .catch((e) => setStatusError(getUserFacingApiError(e, 'Could not load billing status')));
   }, [connectQuery]);
 
+  /** Stripe redirects here with ?checkout= — reconcile subscription after webhook delay. */
+  useEffect(() => {
+    const c = searchParams.get('checkout');
+    if (!c) return;
+
+    navigate('/billing', { replace: true });
+
+    if (c === 'success') {
+      if (checkoutReturnPollStarted.current) return;
+      checkoutReturnPollStarted.current = true;
+      setReturnBanner('pending');
+      void (async () => {
+        for (let i = 0; i < 8; i++) {
+          try {
+            const r = await api.get('/api/billing/status');
+            setBilling(r.data);
+          } catch {
+            /* keep trying */
+          }
+          await new Promise((res) => setTimeout(res, 1000));
+        }
+        setReturnBanner('success');
+      })();
+    } else if (c === 'canceled') {
+      setReturnBanner('canceled');
+    }
+  }, [searchParams, navigate]);
+
   async function handleCheckout(planId: string) {
-    if (!billing?.stripeConfigured) return;
+    if (!billing?.stripeConfigured || checkoutLockRef.current) return;
+    checkoutLockRef.current = true;
     setLoading(planId);
+    let redirecting = false;
     try {
-      const { data } = await api.post('/api/billing/checkout', { plan: planId });
+      const idempotencyKey = crypto.randomUUID();
+      const { data } = await api.post<{ url: string | null }>('/api/billing/checkout', {
+        plan: planId,
+        idempotencyKey,
+      });
       if (data.url) {
+        redirecting = true;
         window.location.href = data.url;
+        return;
       }
     } catch {
-      setLoading('');
+      /* surfaced below */
+    } finally {
+      if (!redirecting) {
+        checkoutLockRef.current = false;
+        setLoading('');
+      }
     }
   }
 
   async function handlePortal() {
+    if (portalLockRef.current) return;
+    portalLockRef.current = true;
+    let redirecting = false;
     try {
-      const { data } = await api.post('/api/billing/portal');
+      const { data } = await api.post<{ url: string | null }>('/api/billing/portal');
       if (data.url) {
+        redirecting = true;
         window.location.href = data.url;
+        return;
       }
-    } catch { /* */ }
+    } catch {
+      /* */
+    } finally {
+      if (!redirecting) portalLockRef.current = false;
+    }
   }
 
   /** Opens Stripe Connect onboarding; sends session cookie (must be logged in on this origin). */
   async function handleConnectOnboarding() {
-    if (!billing?.stripeConfigured) return;
+    if (!billing?.stripeConfigured || connectLoading) return;
     setConnectLoading(true);
+    let redirecting = false;
     try {
       const { data } = await api.post<{ url: string; accountId: string }>(
         '/api/billing/connect/account-link',
       );
-      if (data.url) window.location.href = data.url;
+      if (data.url) {
+        redirecting = true;
+        window.location.href = data.url;
+        return;
+      }
     } catch {
-      setConnectLoading(false);
+      /* */
+    } finally {
+      if (!redirecting) setConnectLoading(false);
     }
   }
 
@@ -119,10 +187,50 @@ export function Billing() {
       <section style={styles.heroCard}>
         <div>
           <h1 style={styles.title}>Billing & Plans</h1>
-          <p style={styles.subtitle}>Manage subscription limits, plan upgrades, and Stripe payout onboarding.</p>
+          <p style={styles.subtitle}>Plans, usage, and Stripe payout setup for your PodSignal workspace.</p>
         </div>
-        <button onClick={() => navigate('/dashboard')} style={styles.backBtn}>Back to Dashboard</button>
+        <button onClick={() => navigate('/dashboard')} style={styles.backBtn}>Back to dashboard</button>
       </section>
+
+      {statusError ? (
+        <div
+          role="alert"
+          data-testid="billing-status-error"
+          style={{
+            background: '#fef2f2',
+            border: '1px solid #fecaca',
+            color: '#b91c1c',
+            padding: '12px 14px',
+            borderRadius: 8,
+            fontSize: 14,
+          }}
+        >
+          {statusError}
+        </div>
+      ) : null}
+
+      {returnBanner === 'pending' ? (
+        <div style={styles.bannerPending} data-testid="billing-return-pending">
+          <strong>Confirming checkout…</strong> Syncing your plan with Stripe (webhooks can take a few seconds).
+        </div>
+      ) : null}
+      {returnBanner === 'success' ? (
+        <div style={styles.bannerSuccess} data-testid="billing-return-success">
+          <strong>Return from Stripe complete.</strong> Your plan below should reflect the subscription. If it
+          still shows Free, refresh in a moment or check the Stripe dashboard.
+          <button type="button" onClick={() => setReturnBanner('none')} style={styles.bannerDismiss}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+      {returnBanner === 'canceled' ? (
+        <div style={styles.bannerCanceled} data-testid="billing-return-canceled">
+          Checkout was canceled — no charge was made.
+          <button type="button" onClick={() => setReturnBanner('none')} style={styles.bannerDismiss}>
+            Dismiss
+          </button>
+        </div>
+      ) : null}
 
       {/* Current Plan Summary */}
       {billing && (
@@ -144,7 +252,7 @@ export function Billing() {
             {/* Usage bar */}
             <div style={{ marginBottom: 8 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#888', marginBottom: 4 }}>
-                <span>Reviews used this period</span>
+                <span>Usage this period</span>
                 <span>{billing.reviewsUsed} / {billing.reviewLimit}</span>
               </div>
               <div style={{ height: 8, background: '#f0f0f0', borderRadius: 4, overflow: 'hidden' }}>
@@ -156,11 +264,16 @@ export function Billing() {
               </div>
             </div>
 
-            {billing.currentPeriodEnd && (
+            {billing.currentPeriodEnd ? (
               <p style={{ fontSize: 13, color: '#888', margin: 0 }}>
                 Current period ends: {new Date(billing.currentPeriodEnd).toLocaleDateString()}
               </p>
-            )}
+            ) : null}
+            <p style={{ fontSize: 12, color: '#9ca3af', margin: '8px 0 0' }}>
+              {billing.currentPeriodEnd
+                ? 'Episode processing credits reset when your paid billing period renews (Stripe).'
+                : 'Episode processing credits reset at the start of each UTC calendar month on the free plan.'}
+            </p>
           </div>
 
           {billing.plan !== 'free' && billing.stripeConfigured && (
@@ -215,7 +328,7 @@ export function Billing() {
                 <span style={{ fontSize: 32, fontWeight: 700, color: '#1F4E79' }}>{plan.price}</span>
                 <span style={{ fontSize: 14, color: '#888' }}>{plan.period}</span>
               </div>
-              <p style={{ fontSize: 13, color: '#1D9E75', fontWeight: 600, marginBottom: 16 }}>{plan.reviews}</p>
+              <p style={{ fontSize: 13, color: '#1D9E75', fontWeight: 600, marginBottom: 16 }}>{plan.quotaLabel}</p>
               <ul style={{ listStyle: 'none', padding: 0, marginBottom: 20, flex: 1 }}>
                 {plan.features.map(f => (
                   <li key={f} style={{ fontSize: 13, color: '#555', padding: '4px 0', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -229,6 +342,8 @@ export function Billing() {
                 <div />
               ) : (
                 <button
+                  type="button"
+                  data-testid={plan.id !== 'free' ? `billing-upgrade-${plan.id}` : undefined}
                   onClick={() => void handleCheckout(plan.id)}
                   disabled={!billing?.stripeConfigured || loading === plan.id}
                   style={plan.popular ? styles.upgradeBtnPrimary : styles.upgradeBtn}
@@ -266,6 +381,53 @@ const styles: Record<string, React.CSSProperties> = {
   title: { fontSize: 34, lineHeight: 1.1, margin: 0, color: '#111827' },
   subtitle: { fontSize: 14, color: '#6b7280', margin: '8px 0 0' },
   backBtn: { padding: '8px 12px', background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12, cursor: 'pointer', color: '#4b5563', fontWeight: 600 },
+  bannerPending: {
+    background: '#fffbeb',
+    border: '1px solid #fde68a',
+    color: '#92400e',
+    padding: '12px 14px',
+    borderRadius: 8,
+    fontSize: 14,
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  bannerSuccess: {
+    background: '#ecfdf5',
+    border: '1px solid #6ee7b7',
+    color: '#065f46',
+    padding: '12px 14px',
+    borderRadius: 8,
+    fontSize: 14,
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  bannerCanceled: {
+    background: '#f9fafb',
+    border: '1px solid #e5e7eb',
+    color: '#4b5563',
+    padding: '12px 14px',
+    borderRadius: 8,
+    fontSize: 14,
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  bannerDismiss: {
+    padding: '4px 10px',
+    borderRadius: 6,
+    border: '1px solid currentColor',
+    background: '#fff',
+    cursor: 'pointer',
+    fontSize: 12,
+  },
   currentPlan: { background: '#fff', borderRadius: 12, padding: 20, border: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', gap: 24 },
   portalBtn: { padding: '10px 14px', background: '#fff', border: '1px solid #6d28d9', borderRadius: 8, fontSize: 13, cursor: 'pointer', color: '#6d28d9', fontWeight: 600, whiteSpace: 'nowrap' },
   connectCard: {

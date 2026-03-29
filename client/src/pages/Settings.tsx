@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
+import './SettingsPodSignal.css';
 import {
   fetchPosStatus,
   triggerPosSync,
@@ -32,15 +33,22 @@ export function Settings() {
   const posError = searchParams.get('pos_error');
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
+    <div className="ps-settings-shell">
+      <div className="ps-settings-breadcrumb">
+        Settings / <strong>Workspace</strong>
+      </div>
+      <header className="ps-settings-header">
         <div>
-          <h1 style={styles.title}>Settings</h1>
-          <span style={styles.meta}>{user?.merchant?.businessName ?? 'ReviewGuard AI'}</span>
+          <h1 className="ps-settings-title">Settings</h1>
+          <span className="ps-settings-meta">{user?.merchant?.businessName ?? 'PodSignal workspace'}</span>
         </div>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <button onClick={() => navigate('/dashboard')} style={styles.backBtn}>&larr; Dashboard</button>
-          <button onClick={() => void logout().then(() => navigate('/login'))} style={styles.logoutBtn}>Sign out</button>
+          <button type="button" onClick={() => navigate('/dashboard')} className="ps-settings-btn-ghost">
+            ← Dashboard
+          </button>
+          <button type="button" onClick={() => void logout().then(() => navigate('/login'))} className="ps-settings-btn-ghost">
+            Sign out
+          </button>
         </div>
       </header>
 
@@ -55,7 +63,7 @@ export function Settings() {
         </div>
       )}
 
-      <div style={styles.tabs}>
+      <div className="ps-settings-tabs">
         {([
           ['pos', 'POS Connection'],
           ['webhook', 'Webhook'],
@@ -63,14 +71,18 @@ export function Settings() {
           ['team', 'Team'],
           ['account', 'Account'],
         ] as [Tab, string][]).map(([t, label]) => (
-          <button key={t} onClick={() => setTab(t)}
-            style={{ ...styles.tab, ...(tab === t ? styles.tabActive : {}) }}>
+          <button
+            key={t}
+            type="button"
+            onClick={() => setTab(t)}
+            className={tab === t ? 'ps-settings-tab ps-settings-tab--active' : 'ps-settings-tab'}
+          >
             {label}
           </button>
         ))}
       </div>
 
-      <div style={styles.content}>
+      <div className="ps-settings-panel">
         {tab === 'pos' && <PosTab />}
         {tab === 'webhook' && <WebhookTab />}
         {tab === 'notifications' && <NotificationsTab />}
@@ -155,8 +167,11 @@ function WebhookTab() {
 
   return (
     <div>
-      <h3 style={styles.sectionTitle}>Google Review Webhook</h3>
-      <p style={{ fontSize: 14, color: '#666', marginBottom: 16 }}>Configure your Google Business Profile to send review notifications to this endpoint.</p>
+      <h3 style={styles.sectionTitle}>Google Business reviews (legacy)</h3>
+      <p style={{ fontSize: 14, color: '#666', marginBottom: 16 }}>
+        Optional integration for the ReviewGuard-era workflow — not part of the PodSignal podcast launch MVP. Safe to ignore
+        for podcast-only pilots.
+      </p>
       <div style={styles.card}>
         <Row label="Webhook URL">
           <code style={styles.code}>{webhook.webhookUrl}</code>
@@ -442,15 +457,15 @@ const styles: Record<string, React.CSSProperties> = {
   tab: { padding: '10px 20px', background: 'white', border: '1px solid #e0e0e0', borderRadius: 8, fontSize: 14, cursor: 'pointer', color: '#444', fontWeight: 500 },
   tabActive: { background: '#1F4E79', color: 'white', borderColor: '#1F4E79' },
   content: { background: 'white', borderRadius: 12, padding: 32, boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
-  sectionTitle: { fontSize: 18, fontWeight: 700, color: '#1F4E79', marginTop: 0, marginBottom: 16 },
+  sectionTitle: { fontSize: 18, fontWeight: 700, color: '#111827', marginTop: 0, marginBottom: 16 },
   subTitle: { fontSize: 15, fontWeight: 600, color: '#333', marginBottom: 12, marginTop: 0 },
   card: { background: '#f8f9fa', borderRadius: 8, padding: 20 },
   row: { display: 'flex', alignItems: 'center', gap: 16, padding: '12px 0', borderBottom: '1px solid #eee' },
   label: { fontSize: 14, color: '#888', minWidth: 160, flexShrink: 0 },
   code: { fontSize: 13, fontFamily: 'monospace', background: '#e9ecef', padding: '4px 8px', borderRadius: 4, wordBreak: 'break-all' as any },
-  copyBtn: { padding: '4px 10px', background: 'white', border: '1px solid #d1d1d1', borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#1F4E79', fontWeight: 600, flexShrink: 0 },
-  badge: { display: 'inline-block', padding: '2px 10px', background: '#1F4E79', color: 'white', borderRadius: 12, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' as any },
-  primaryBtn: { padding: '10px 24px', background: '#1F4E79', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
+  copyBtn: { padding: '4px 10px', background: 'white', border: '1px solid #d1d1d1', borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#4f46e5', fontWeight: 600, flexShrink: 0 },
+  badge: { display: 'inline-block', padding: '2px 10px', background: '#6366f1', color: 'white', borderRadius: 12, fontSize: 12, fontWeight: 600, textTransform: 'uppercase' as const },
+  primaryBtn: { padding: '10px 24px', background: '#6366f1', color: 'white', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 600, cursor: 'pointer' },
   dangerBtn: { padding: '6px 14px', background: 'white', border: '1px solid #E24B4A', borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#E24B4A', fontWeight: 600 },
   input: { padding: '10px 14px', border: '1px solid #d1d1d1', borderRadius: 8, fontSize: 14, outline: 'none' },
   helpList: { fontSize: 14, color: '#555', lineHeight: 1.8, paddingLeft: 20 },
