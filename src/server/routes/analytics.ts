@@ -5,10 +5,61 @@
  * and dispute success rates.
  */
 
-import type { FastifyInstance } from 'fastify';
-import { eq, and, gte, lte, sql, count } from 'drizzle-orm';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { eq, and, gte, sql, count, isNotNull, desc } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '../../db/index.js';
-import { reviewsInvestigation } from '../../db/schema.js';
+import { isMissingSchemaError } from '../../db/podsignalSchemaStatus.js';
+import {
+  reviewsInvestigation,
+  podcasts,
+  episodes,
+  campaigns,
+  campaignTasks,
+  podsignalHostMetricSnapshots,
+} from '../../db/schema.js';
+
+const HOST_METRIC_KEYS = [
+  'spotify_streams_7d',
+  'apple_plays_7d',
+  'youtube_views_7d',
+  'rss_downloads_7d',
+  'newsletter_opens',
+  'other',
+] as const;
+
+const hostMetricBodySchema = z
+  .object({
+    metricKey: z.enum(HOST_METRIC_KEYS),
+    customLabel: z.string().max(80).optional().nullable(),
+    value: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+    sourceNote: z.string().max(500).optional().nullable(),
+    episodeId: z.string().uuid().optional().nullable(),
+  })
+  .refine(
+    (d) =>
+      d.metricKey !== 'other' ||
+      (typeof d.customLabel === 'string' && d.customLabel.trim().length > 0),
+    { message: 'customLabel is required when metricKey is other', path: ['customLabel'] },
+  );
+
+function hostMetricsUnavailable(reply: FastifyReply) {
+  return reply.status(503).send({
+    error: 'Host metrics schema missing',
+    code: 'PODSIGNAL_HOST_METRICS_SCHEMA_MISSING',
+    migrationHint: 'Run npm run db:apply-0014 (migrations/0014_host_metric_snapshots.sql)',
+  });
+}
+
+async function episodeOwnedByUser(episodeId: string, userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: episodes.id })
+    .from(episodes)
+    .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+    .where(and(eq(episodes.id, episodeId), eq(podcasts.ownerId, userId)))
+    .limit(1);
+  return !!row;
+}
 
 export async function analyticsRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /api/analytics/trends?days=30
@@ -149,5 +200,225 @@ export async function analyticsRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({
       data: rows.map((r) => ({ rating: r.rating, count: Number(r.cnt) })),
     });
+  });
+
+  // GET /api/analytics/podsignal-summary — workspace growth snapshot (shows / episodes / campaigns)
+  fastify.get('/podsignal-summary', async (request, reply) => {
+    const userId = request.user?.userId;
+    if (!userId) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+
+    const [showCount] = await db
+      .select({ c: count() })
+      .from(podcasts)
+      .where(eq(podcasts.ownerId, userId));
+
+    const [episodeCount] = await db
+      .select({ c: count() })
+      .from(episodes)
+      .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+      .where(eq(podcasts.ownerId, userId));
+
+    const statusRows = await db
+      .select({
+        status: episodes.status,
+        c: count(),
+      })
+      .from(episodes)
+      .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+      .where(eq(podcasts.ownerId, userId))
+      .groupBy(episodes.status);
+
+    const [activeCampaigns] = await db
+      .select({ c: count() })
+      .from(campaigns)
+      .innerJoin(episodes, eq(campaigns.episodeId, episodes.id))
+      .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+      .where(and(eq(podcasts.ownerId, userId), eq(campaigns.status, 'ACTIVE')));
+
+    const [tasksTotal] = await db
+      .select({ c: count() })
+      .from(campaignTasks)
+      .innerJoin(campaigns, eq(campaignTasks.campaignId, campaigns.id))
+      .innerJoin(episodes, eq(campaigns.episodeId, episodes.id))
+      .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+      .where(eq(podcasts.ownerId, userId));
+
+    const [tasksDone] = await db
+      .select({ c: count() })
+      .from(campaignTasks)
+      .innerJoin(campaigns, eq(campaignTasks.campaignId, campaigns.id))
+      .innerJoin(episodes, eq(campaigns.episodeId, episodes.id))
+      .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+      .where(and(eq(podcasts.ownerId, userId), isNotNull(campaignTasks.doneAt)));
+
+    return reply.send({
+      shows: Number(showCount?.c ?? 0),
+      episodes: Number(episodeCount?.c ?? 0),
+      episodesByStatus: Object.fromEntries(statusRows.map((r) => [r.status, Number(r.c)])),
+      activeCampaigns: Number(activeCampaigns?.c ?? 0),
+      launchTasksDone: Number(tasksDone?.c ?? 0),
+      launchTasksTotal: Number(tasksTotal?.c ?? 0),
+    });
+  });
+
+  // GET /api/analytics/episode-options — one query for host-metric dropdown (avoids N+1 client freeze)
+  fastify.get<{
+    Querystring: { limit?: string };
+  }>('/episode-options', async (request, reply) => {
+    const userId = request.user?.userId;
+    if (!userId) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+    const limit = Math.min(500, Math.max(1, parseInt(request.query.limit ?? '300', 10) || 300));
+
+    const rows = await db
+      .select({
+        id: episodes.id,
+        episodeTitle: episodes.title,
+        podcastTitle: podcasts.title,
+      })
+      .from(episodes)
+      .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+      .where(eq(podcasts.ownerId, userId))
+      .orderBy(desc(episodes.createdAt))
+      .limit(limit);
+
+    return reply.send({
+      options: rows.map((r) => ({
+        id: r.id,
+        label: `${r.podcastTitle}: ${r.episodeTitle}`,
+      })),
+    });
+  });
+
+  // GET /api/analytics/host-snapshots — self-reported host metrics (user-entered)
+  fastify.get<{
+    Querystring: { limit?: string };
+  }>('/host-snapshots', async (request, reply) => {
+    const userId = request.user?.userId;
+    if (!userId) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+    const limit = Math.min(100, Math.max(1, parseInt(request.query.limit ?? '50', 10) || 50));
+    try {
+      const rows = await db
+        .select({
+          id: podsignalHostMetricSnapshots.id,
+          metricKey: podsignalHostMetricSnapshots.metricKey,
+          customLabel: podsignalHostMetricSnapshots.customLabel,
+          value: podsignalHostMetricSnapshots.value,
+          sourceNote: podsignalHostMetricSnapshots.sourceNote,
+          episodeId: podsignalHostMetricSnapshots.episodeId,
+          createdAt: podsignalHostMetricSnapshots.createdAt,
+          episodeTitle: episodes.title,
+        })
+        .from(podsignalHostMetricSnapshots)
+        .leftJoin(episodes, eq(podsignalHostMetricSnapshots.episodeId, episodes.id))
+        .where(eq(podsignalHostMetricSnapshots.userId, userId))
+        .orderBy(desc(podsignalHostMetricSnapshots.createdAt))
+        .limit(limit);
+
+      return reply.send({
+        snapshots: rows.map((r) => ({
+          id: r.id,
+          metricKey: r.metricKey,
+          customLabel: r.customLabel,
+          value: Number(r.value),
+          sourceNote: r.sourceNote,
+          episodeId: r.episodeId,
+          episodeTitle: r.episodeTitle,
+          createdAt: r.createdAt.toISOString(),
+          evidence: 'self_reported' as const,
+        })),
+      });
+    } catch (e: unknown) {
+      if (isMissingSchemaError(e)) {
+        return hostMetricsUnavailable(reply);
+      }
+      throw e;
+    }
+  });
+
+  // POST /api/analytics/host-snapshots
+  fastify.post('/host-snapshots', async (request, reply) => {
+    const userId = request.user?.userId;
+    if (!userId) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+    const parsed = hostMetricBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid body', details: parsed.error.flatten() });
+    }
+    const { metricKey, customLabel, value, sourceNote, episodeId } = parsed.data;
+    if (episodeId) {
+      const ok = await episodeOwnedByUser(episodeId, userId);
+      if (!ok) {
+        return reply.status(403).send({ error: 'Episode not found or not yours' });
+      }
+    }
+    try {
+      const [row] = await db
+        .insert(podsignalHostMetricSnapshots)
+        .values({
+          userId,
+          episodeId: episodeId ?? null,
+          metricKey,
+          customLabel: metricKey === 'other' ? customLabel!.trim() : null,
+          value,
+          sourceNote: (sourceNote ?? '').trim(),
+        })
+        .returning({
+          id: podsignalHostMetricSnapshots.id,
+          createdAt: podsignalHostMetricSnapshots.createdAt,
+        });
+      return reply.status(201).send({
+        id: row!.id,
+        metricKey,
+        customLabel: metricKey === 'other' ? customLabel!.trim() : null,
+        value,
+        sourceNote: (sourceNote ?? '').trim(),
+        episodeId: episodeId ?? null,
+        createdAt: row!.createdAt.toISOString(),
+        evidence: 'self_reported' as const,
+      });
+    } catch (e: unknown) {
+      if (isMissingSchemaError(e)) {
+        return hostMetricsUnavailable(reply);
+      }
+      throw e;
+    }
+  });
+
+  // DELETE /api/analytics/host-snapshots/:id
+  fastify.delete<{
+    Params: { id: string };
+  }>('/host-snapshots/:id', async (request, reply) => {
+    const userId = request.user?.userId;
+    if (!userId) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+    const id = request.params.id;
+    if (!z.string().uuid().safeParse(id).success) {
+      return reply.status(400).send({ error: 'Invalid id' });
+    }
+    try {
+      const deleted = await db
+        .delete(podsignalHostMetricSnapshots)
+        .where(
+          and(eq(podsignalHostMetricSnapshots.id, id), eq(podsignalHostMetricSnapshots.userId, userId)),
+        )
+        .returning({ id: podsignalHostMetricSnapshots.id });
+      if (!deleted.length) {
+        return reply.status(404).send({ error: 'Not found' });
+      }
+      return reply.send({ ok: true });
+    } catch (e: unknown) {
+      if (isMissingSchemaError(e)) {
+        return hostMetricsUnavailable(reply);
+      }
+      throw e;
+    }
   });
 }

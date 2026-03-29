@@ -1,0 +1,36 @@
+# Local Postgres + Redis for development (`npm run dev` / `npm run dev:all`).
+# Start: docker compose up -d
+# Stop:  docker compose down
+#
+# Use DATABASE_URL=postgresql://reviewguard:reviewguard@localhost:5432/reviewguard
+# and REDIS_URL=redis://localhost:6379 in .env (see .env.example).
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: reviewguard
+      POSTGRES_PASSWORD: reviewguard
+      POSTGRES_DB: reviewguard
+    volumes:
+      - reviewguard_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reviewguard -d reviewguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  reviewguard_pgdata:

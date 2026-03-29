@@ -1,6 +1,6 @@
 .ps-shell {
   display: grid;
-  grid-template-columns: 176px 1fr;
+  grid-template-columns: 232px 1fr;
   min-height: 100vh;
   width: 100%;
   background: #f5f5f7;
@@ -22,17 +22,22 @@
   border-bottom: 1px solid #eef0f2;
 }
 
-.ps-logo {
-  width: 30px;
-  height: 30px;
+.ps-logo-mark {
+  width: 32px;
+  height: 32px;
   border-radius: 8px;
-  background: #7c3aed;
-  color: #fff;
+  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.ps-logo-inner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 3px;
 }
 
 .ps-brand-text {
@@ -41,11 +46,53 @@
   color: #111827;
 }
 
+.ps-workspace {
+  padding: 0 12px 12px;
+  border-bottom: 1px solid #eef0f2;
+}
+
+.ps-workspace-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  cursor: default;
+}
+
+.ps-workspace-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .ps-nav {
   padding: 12px 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+
+.ps-nav--grow {
+  flex: 1;
+  min-height: 0;
+}
+
+.ps-nav--footer {
+  padding-top: 4px;
+  border-top: 1px solid #eef0f2;
+}
+
+.ps-nav-icon {
+  flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .ps-nav-link {
@@ -58,6 +105,10 @@
   font-size: 13px;
   font-weight: 500;
   text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
 }
 
 .ps-nav-link:hover {
@@ -66,8 +117,20 @@
 }
 
 .ps-nav-link-active {
-  background: #f3e8ff;
-  color: #7c3aed;
+  background: #eef2ff;
+  color: #4f46e5;
+  font-weight: 600;
+}
+
+.ps-nav-link-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: #6366f1;
 }
 
 .ps-sidebar-footer {
@@ -106,7 +169,43 @@
 .ps-top-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
+}
+
+.ps-icon-btn {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #6b7280;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ps-icon-btn:hover {
+  background: #f9fafb;
+  color: #374151;
+}
+
+.ps-icon-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .ps-pill {
@@ -124,14 +223,18 @@
   height: 32px;
   border-radius: 50%;
   border: 1px solid #e5e7eb;
-  background: #f3f4f6;
-  color: #374151;
+  background: #eef2ff;
+  color: #4f46e5;
   font-size: 12px;
   font-weight: 600;
 }
 
 .ps-content {
   padding: 24px;
+}
+
+.ps-content--flush {
+  padding: 24px 24px 32px;
 }
 
 @media (max-width: 980px) {
@@ -148,7 +251,8 @@
     padding: 12px 14px;
   }
 
-  .ps-content {
+  .ps-content,
+  .ps-content--flush {
     padding: 14px;
   }
 }

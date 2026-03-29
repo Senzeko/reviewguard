@@ -1,7 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
 import { fetchPodcast, fetchEpisodes, createEpisode } from '../api/client';
 import type { Podcast, Episode } from '../types/podsignal';
+import { loadDraft, removeDraft, saveDraft } from '../lib/draftStorage';
+import './podsignal-pages.css';
 
 export function ShowDetailPage() {
   const { podcastId } = useParams<{ podcastId: string }>();
@@ -12,6 +14,30 @@ export function ShowDetailPage() {
   const [error, setError] = useState('');
   const [title, setTitle] = useState('');
   const [creating, setCreating] = useState(false);
+  const [draftNote, setDraftNote] = useState(false);
+  const createLockRef = useRef(false);
+
+  useEffect(() => {
+    if (!podcastId) return;
+    const d = loadDraft<{ title: string }>(`show_${podcastId}_new_episode`);
+    if (d?.value.title?.trim()) {
+      setTitle(d.value.title);
+      setDraftNote(true);
+    } else {
+      setTitle('');
+      setDraftNote(false);
+    }
+  }, [podcastId]);
+
+  useEffect(() => {
+    if (!podcastId) return;
+    const t = window.setTimeout(() => {
+      const x = title.trim();
+      if (x.length > 0) saveDraft(`show_${podcastId}_new_episode`, { title });
+      else removeDraft(`show_${podcastId}_new_episode`);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [podcastId, title]);
 
   const load = useCallback(() => {
     if (!podcastId) return;
@@ -32,11 +58,14 @@ export function ShowDetailPage() {
 
   const handleCreateEpisode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!podcastId || !title.trim()) return;
+    if (!podcastId || !title.trim() || createLockRef.current) return;
+    createLockRef.current = true;
     setCreating(true);
     setError('');
     try {
       const ep = await createEpisode({ podcastId, title: title.trim() });
+      removeDraft(`show_${podcastId}_new_episode`);
+      setDraftNote(false);
       setTitle('');
       navigate(`/episodes/${ep.id}`);
     } catch (e: unknown) {
@@ -44,6 +73,7 @@ export function ShowDetailPage() {
       setError(err.response?.data?.error ?? 'Could not create episode');
     } finally {
       setCreating(false);
+      createLockRef.current = false;
     }
   };
 
@@ -71,14 +101,76 @@ export function ShowDetailPage() {
       </div>
 
       <section style={styles.heroCard}>
-        <div>
-          <h1 style={styles.title}>{podcast.title}</h1>
-          <p style={styles.subtitle}>
-            {podcast.description || 'Manage episodes and launch campaigns for this show.'}
-          </p>
+        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+          <div
+            style={{
+              width: 72,
+              height: 72,
+              borderRadius: 12,
+              background: 'linear-gradient(135deg, #e0e7ff, #fae8ff)',
+              flexShrink: 0,
+            }}
+          />
+          <div>
+            <h1 style={styles.title}>{podcast.title}</h1>
+            <p style={styles.subtitle}>
+              {podcast.description?.trim()
+                ? podcast.description
+                : 'No show description yet — optional for the closed beta.'}
+            </p>
+            {podcast.isActive ? (
+              <p style={{ ...styles.subtitle, marginTop: 8 }}>
+                <span className="ps-badge ps-badge--green">Show active</span>
+              </p>
+            ) : null}
+          </div>
         </div>
-        <div style={styles.countPill}>{episodes.length} episodes</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.getElementById('new-episode-title');
+              el?.focus();
+            }}
+            className="ps-btn-primary"
+          >
+            + New episode
+          </button>
+          <Link to="/analytics" className="ps-btn-outline" style={{ textDecoration: 'none' }}>
+            View analytics
+          </Link>
+          <Link to="/reports" className="ps-btn-outline" style={{ textDecoration: 'none' }}>
+            Sponsor reports
+          </Link>
+        </div>
       </section>
+
+      <div className="ps-kpi-grid">
+        <div className="ps-kpi">
+          <div className="ps-kpi-label">Total episodes</div>
+          <div className="ps-kpi-value">{episodes.length}</div>
+          <div className="ps-kpi-meta" style={{ color: '#9ca3af' }}>
+            In this workspace
+          </div>
+        </div>
+        <div className="ps-kpi">
+          <div className="ps-kpi-label">Active campaigns</div>
+          <div className="ps-kpi-value">—</div>
+          <div className="ps-kpi-meta ps-kpi-meta--warn">Sample</div>
+        </div>
+        <div className="ps-kpi">
+          <div className="ps-kpi-label">Avg readiness</div>
+          <div className="ps-kpi-value">—</div>
+        </div>
+        <div className="ps-kpi">
+          <div className="ps-kpi-label">30-day growth</div>
+          <div className="ps-kpi-value">—</div>
+        </div>
+        <div className="ps-kpi">
+          <div className="ps-kpi-label">Sponsor-ready</div>
+          <div className="ps-kpi-value">—</div>
+        </div>
+      </div>
 
       {error ? (
         <div
@@ -97,8 +189,24 @@ export function ShowDetailPage() {
 
       <section style={styles.card}>
         <h3 style={{ fontSize: 16, color: '#111827', margin: '0 0 12px' }}>Create episode</h3>
+        {draftNote ? (
+          <p style={{ fontSize: 13, color: '#065f46', margin: '0 0 10px' }}>
+            Restored unsaved episode title from this session.
+            <button
+              type="button"
+              onClick={() => {
+                setDraftNote(false);
+                if (podcastId) removeDraft(`show_${podcastId}_new_episode`);
+              }}
+              style={{ marginLeft: 8, fontSize: 13, cursor: 'pointer' }}
+            >
+              Clear
+            </button>
+          </p>
+        ) : null}
         <form onSubmit={handleCreateEpisode} style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         <input
+          id="new-episode-title"
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="New episode title"

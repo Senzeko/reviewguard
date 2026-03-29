@@ -13,16 +13,16 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
 interface SSEClient {
-  merchantId: string;
+  targetId: string;
   reply: FastifyReply;
 }
 
 const clients: Set<SSEClient> = new Set();
 
-export function broadcastSSE(merchantId: string, event: string, data: Record<string, unknown>): void {
+export function broadcastSSE(targetId: string, event: string, data: Record<string, unknown>): void {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const client of clients) {
-    if (client.merchantId === merchantId) {
+    if (client.targetId === targetId) {
       try {
         client.reply.raw.write(payload);
       } catch {
@@ -32,13 +32,17 @@ export function broadcastSSE(merchantId: string, event: string, data: Record<str
   }
 }
 
+export function broadcastToUser(userId: string, event: string, data: Record<string, unknown>): void {
+  broadcastSSE(userId, event, data);
+}
+
 export async function sseRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/events', async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!request.user?.merchantId) {
-      return reply.status(403).send({ error: 'No merchant linked' });
+    if (!request.user?.userId) {
+      return reply.status(403).send({ error: 'No user session' });
     }
 
-    const merchantId = request.user.merchantId;
+    const targetId = request.user.userId;
 
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
@@ -48,9 +52,9 @@ export async function sseRoutes(fastify: FastifyInstance): Promise<void> {
     });
 
     // Send initial heartbeat
-    reply.raw.write(`event: connected\ndata: {"merchantId":"${merchantId}"}\n\n`);
+    reply.raw.write(`event: connected\ndata: {"userId":"${targetId}"}\n\n`);
 
-    const client: SSEClient = { merchantId, reply };
+    const client: SSEClient = { targetId, reply };
     clients.add(client);
 
     // Heartbeat every 30s to keep connection alive

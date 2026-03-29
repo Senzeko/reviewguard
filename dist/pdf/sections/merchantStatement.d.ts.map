@@ -1,1 +1,0 @@
-{"version":3,"file":"merchantStatement.d.ts","sourceRoot":"","sources":["../../../src/pdf/sections/merchantStatement.ts"],"names":[],"mappings":"AAAA;;;;GAIG;AAEH,OAAO,KAAK,EAAE,WAAW,EAAE,MAAM,cAAc,CAAC;AAChD,OAAO,KAAK,EAAE,cAAc,EAAE,MAAM,aAAa,CAAC;AAclD,wBAAgB,uBAAuB,CACrC,GAAG,EAAE,WAAW,EAChB,MAAM,EAAE,cAAc,GACrB,WAAW,CAoHb"}

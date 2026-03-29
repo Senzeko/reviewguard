@@ -1,1 +1,0 @@
-{"version":3,"file":"identity.d.ts","sourceRoot":"","sources":["../../../src/engine/factors/identity.ts"],"names":[],"mappings":"AAAA;;;;;GAKG;AAEH,OAAO,KAAK,EAAE,oBAAoB,EAAE,MAAM,aAAa,CAAC;AAqExD;;;;;;GAMG;AACH,wBAAgB,WAAW,CAAC,IAAI,EAAE,MAAM,EAAE,IAAI,EAAE,MAAM,GAAG,MAAM,CAuB9D;AAID,wBAAgB,oBAAoB,CAClC,YAAY,EAAE,MAAM,EACpB,YAAY,EAAE,MAAM,GAAG,IAAI,GAC1B,oBAAoB,CAgDtB"}

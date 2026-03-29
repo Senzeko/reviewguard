@@ -16,7 +16,7 @@ const SMTP_HOST = process.env['SMTP_HOST'] ?? '';
 const SMTP_PORT = parseInt(process.env['SMTP_PORT'] ?? '587', 10);
 const SMTP_USER = process.env['SMTP_USER'] ?? '';
 const SMTP_PASS = process.env['SMTP_PASS'] ?? '';
-const SMTP_FROM = process.env['SMTP_FROM'] ?? 'ReviewGuard AI <noreply@reviewguard.ai>';
+const SMTP_FROM = process.env['SMTP_FROM'] ?? 'PodSignal <noreply@podsignal.app>';
 const APP_URL = process.env['APP_URL'] ?? 'http://localhost:5173';
 
 const isConfigured = !!(SMTP_HOST && SMTP_USER && SMTP_PASS);
@@ -78,11 +78,11 @@ function wrapHtml(title: string, body: string): string {
 <head><meta charset="utf-8"><title>${title}</title></head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:600px;margin:0 auto;padding:20px;color:#333;">
   <div style="border-bottom:3px solid #1F4E79;padding-bottom:16px;margin-bottom:24px;">
-    <h2 style="margin:0;color:#1F4E79;">ReviewGuard AI</h2>
+    <h2 style="margin:0;color:#1F4E79;">PodSignal</h2>
   </div>
   ${body}
   <div style="margin-top:32px;padding-top:16px;border-top:1px solid #e0e0e0;font-size:12px;color:#888;">
-    <p>You're receiving this because you're a ReviewGuard AI merchant.
+    <p>You're receiving this because you have a PodSignal account.
     <a href="${APP_URL}/settings" style="color:#1F4E79;">Manage notification preferences</a></p>
   </div>
 </body>

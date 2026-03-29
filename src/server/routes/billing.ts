@@ -8,6 +8,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import Stripe from 'stripe';
+import { utcMonthKey } from '../../billing/processingQuota.js';
 import { db } from '../../db/index.js';
 import { subscriptions, merchants, merchantUsers } from '../../db/schema.js';
 
@@ -61,7 +62,7 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
   });
 
   // POST /api/billing/checkout — create a Stripe Checkout session
-  fastify.post<{ Body: { plan: string } }>('/checkout', async (request, reply) => {
+  fastify.post<{ Body: { plan: string; idempotencyKey?: string } }>('/checkout', async (request, reply) => {
     if (!request.user?.merchantId) {
       return reply.status(403).send({ error: 'No merchant linked' });
     }
@@ -123,17 +124,21 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
       }
     }
 
-    const session = await stripe.checkout.sessions.create({
-      customer: customerId,
-      mode: 'subscription',
-      line_items: [{ price: plan.priceId, quantity: 1 }],
-      success_url: `${APP_URL}/settings?billing=success`,
-      cancel_url: `${APP_URL}/settings?billing=canceled`,
-      metadata: {
-        merchantId: request.user.merchantId,
-        plan: request.body.plan,
+    const idempotencyKey = request.body.idempotencyKey?.trim();
+    const session = await stripe.checkout.sessions.create(
+      {
+        customer: customerId,
+        mode: 'subscription',
+        line_items: [{ price: plan.priceId, quantity: 1 }],
+        success_url: `${APP_URL}/billing?checkout=success`,
+        cancel_url: `${APP_URL}/billing?checkout=canceled`,
+        metadata: {
+          merchantId: request.user.merchantId,
+          plan: request.body.plan,
+        },
       },
-    });
+      idempotencyKey ? { idempotencyKey } : undefined,
+    );
 
     return reply.send({ url: session.url });
   });
@@ -160,7 +165,7 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
 
     const session = await stripe.billingPortal.sessions.create({
       customer: sub.stripeCustomerId,
-      return_url: `${APP_URL}/settings`,
+      return_url: `${APP_URL}/billing`,
     });
 
     return reply.send({ url: session.url });
@@ -205,6 +210,8 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
               plan: planName,
               status: 'active',
               reviewLimit: planConfig.reviewLimit,
+              reviewsUsed: 0,
+              processingQuotaPeriodKey: null,
               updatedAt: new Date(),
             })
             .where(eq(subscriptions.merchantId, merchantId));
@@ -249,6 +256,9 @@ export async function billingRoutes(fastify: FastifyInstance): Promise<void> {
             plan: 'free',
             reviewLimit: 25,
             reviewsUsed: 0,
+            stripeSubscriptionId: null,
+            currentPeriodEnd: null,
+            processingQuotaPeriodKey: utcMonthKey(),
             updatedAt: new Date(),
           })
           .where(eq(subscriptions.stripeCustomerId, customerId));
