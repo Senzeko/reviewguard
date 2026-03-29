@@ -10,6 +10,15 @@ import { getPodsignalPilotSchemaStatus } from '../../db/podsignalSchemaStatus.js
 import { isRedisHealthy } from '../../queue/client.js';
 
 export async function healthRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * Liveness only — HTTP 200 if the process is serving (no DB/Redis).
+   * Use for PaaS health probes (e.g. Railway) so deploy succeeds while you
+   * wire DATABASE_URL / REDIS_URL / migrations; use GET /health for full readiness.
+   */
+  app.get('/health/live', async (_request, reply) => {
+    return reply.status(200).send({ status: 'alive', uptime: process.uptime() });
+  });
+
   app.get('/health', async (_request, reply) => {
     let dbStatus: 'connected' | 'error' = 'error';
     let podsignalPilotSchema:
