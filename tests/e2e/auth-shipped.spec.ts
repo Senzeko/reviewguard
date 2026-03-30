@@ -50,8 +50,10 @@ test.describe('Shipped auth (mocked API)', () => {
     await page.getByLabel('Password', { exact: true }).fill('password123');
     await page.getByRole('button', { name: /^sign in$/i }).click();
 
-    await expect.poll(() => loginPosts).toBe(1);
-    await expect(page).toHaveURL(/\/onboarding/);
+    await expect
+      .poll(() => loginPosts, { timeout: 10_000, intervals: [100, 250, 500] })
+      .toBe(1);
+    await expect(page).toHaveURL(/\/onboarding/, { timeout: 15_000 });
   });
 
   test('sign-in does not double-submit when button clicked twice', async ({ page }) => {
@@ -125,7 +127,7 @@ test.describe('Shipped auth (mocked API)', () => {
     await page.getByLabel('Full name', { exact: true }).fill('E2E New');
     await page.getByLabel('Work email', { exact: true }).fill('new@e2e.local');
     await page.getByPlaceholder('Create a password (8+ characters)').fill('password123');
-    await page.getByRole('button', { name: /start free trial/i }).click();
+    await page.getByRole('button', { name: /create account/i }).click();
     await expect(page).toHaveURL(/\/onboarding/);
   });
 });

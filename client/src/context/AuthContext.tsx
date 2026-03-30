@@ -6,8 +6,8 @@ import { resetUnauthorizedRedirectGuard } from '../auth/authNavigation';
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  signup: (email: string, password: string, fullName: string) => Promise<void>;
+  login: (email: string, password: string) => Promise<AuthUser>;
+  signup: (email: string, password: string, fullName: string) => Promise<AuthUser>;
   logout: () => Promise<void>;
   refetchUser: () => Promise<void>;
 }
@@ -31,16 +31,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     fetchMe().finally(() => setLoading(false));
   }, [fetchMe]);
 
-  const login = async (email: string, password: string) => {
+  const login = async (email: string, password: string): Promise<AuthUser> => {
     const { data } = await api.post<AuthUser>('/api/auth/login', { email, password });
     setUser(data);
     resetUnauthorizedRedirectGuard();
+    return data;
   };
 
-  const signup = async (email: string, password: string, fullName: string) => {
+  const signup = async (
+    email: string,
+    password: string,
+    fullName: string,
+  ): Promise<AuthUser> => {
     const { data } = await api.post<AuthUser>('/api/auth/signup', { email, password, fullName });
     setUser(data);
     resetUnauthorizedRedirectGuard();
+    return data;
   };
 
   const logout = async () => {

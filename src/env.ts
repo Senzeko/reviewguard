@@ -12,10 +12,9 @@ import { z } from 'zod';
 import { config } from 'dotenv';
 
 // Load .env file into process.env before validation.
-// override: true ensures .env values take precedence over empty shell vars
-// (common in dev when ANTHROPIC_API_KEY etc. are set but empty in the parent shell).
-// In production, real env vars are injected by the platform and .env is absent — that's fine.
-config({ override: true });
+// override: true (local) lets .env win over empty shell vars (e.g. ANTHROPIC_API_KEY).
+// In CI, override: false so DATABASE_URL etc. from the workflow are never replaced by a stray .env.
+config({ override: process.env.CI !== 'true' });
 
 const envSchema = z.object({
 // ── Database ───────────────────────────────────────────────────────────────

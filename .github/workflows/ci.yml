@@ -47,8 +47,9 @@ jobs:
           POSTGRES_DB: reviewguard_test
         ports:
           - 5432:5432
+        # Must use POSTGRES_USER — default pg_isready connects as "postgres", which does not exist when POSTGRES_USER=test
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U test -d reviewguard_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -69,6 +70,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npx drizzle-kit migrate
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/reviewguard_test
       - run: npx vitest run
 
   e2e-tests:
@@ -96,7 +99,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U test -d reviewguard_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -119,6 +122,8 @@ jobs:
       - run: cd client && npm ci
       - run: npm run client:build
       - run: npx drizzle-kit migrate
+        env:
+          DATABASE_URL: postgresql://test:test@localhost:5432/reviewguard_test
       - run: npx playwright install --with-deps chromium
       - name: Start API (background)
         run: npx tsx src/index.ts &
