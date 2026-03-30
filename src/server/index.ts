@@ -10,6 +10,7 @@ import multipart from '@fastify/multipart';
 import cors from '@fastify/cors';
 import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
+import fastifyRateLimit from '@fastify/rate-limit';
 import { existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -37,6 +38,28 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let app: FastifyInstance | null = null;
 
+function buildAllowedCorsOrigins(): Set<string> {
+  const out = new Set<string>();
+
+  const appUrl = env.APP_URL.trim();
+  if (appUrl) out.add(appUrl);
+
+  for (const item of env.CORS_ORIGINS.split(',')) {
+    const origin = item.trim();
+    if (origin) out.add(origin);
+  }
+
+  const railwayPublic = process.env['RAILWAY_PUBLIC_DOMAIN']?.trim();
+  if (railwayPublic) out.add(`https://${railwayPublic}`);
+
+  if (env.NODE_ENV !== 'production') {
+    out.add('http://localhost:5173');
+    out.add('http://127.0.0.1:5173');
+  }
+
+  return out;
+}
+
 export async function startServer(): Promise<FastifyInstance> {
   // Railway / other PaaS terminate TLS in front of Node — trust X-Forwarded-* for cookies & HTTPS
   app = Fastify({ logger: true, trustProxy: true });
@@ -45,8 +68,23 @@ export async function startServer(): Promise<FastifyInstance> {
   await app.register(multipart, {
     limits: { fileSize: 512 * 1024 * 1024 },
   });
-  await app.register(cors, { origin: true, credentials: true });
+  const allowedOrigins = buildAllowedCorsOrigins();
+  await app.register(cors, {
+    credentials: true,
+    origin(origin, cb) {
+      // Non-browser callers (curl/server-to-server) may have no Origin header.
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.has(origin)) return cb(null, true);
+      cb(new Error('Not allowed by CORS'), false);
+    },
+  });
   await app.register(cookie);
+  await app.register(fastifyRateLimit, {
+    global: env.RATE_LIMIT_ENABLED,
+    max: env.RATE_LIMIT_MAX,
+    timeWindow: env.RATE_LIMIT_TIME_WINDOW,
+    skipOnError: true,
+  });
 
   // Auth middleware (validates session cookie on protected routes)
   authGuard(app);

@@ -27,6 +27,7 @@ import { startServer, stopServer } from './server/index.js';
 import { startPodsignalWorker, stopPodsignalWorker } from './worker/podsignalWorker.js';
 import { startWorker, stopWorker } from './worker/index.js';
 import { startEngineWorker, stopEngineWorker } from './engine/worker.js';
+import { startScheduler, stopScheduler } from './scheduler/index.js';
 
 /** PaaS DB/Redis can be a few seconds behind the web process; retry so we do not exit(1) before healthchecks pass. */
 const STARTUP_CONNECT_RETRIES = 20;
@@ -107,6 +108,7 @@ async function main(): Promise<void> {
   startPodsignalWorker();
   startWorker();
   await startEngineWorker();
+  startScheduler();
 
   console.log('\n[PodSignal] ✅  PodSignal — API server ready\n');
   console.log('  DATABASE_URL : %s', env.DATABASE_URL.replace(/:\/\/[^@]+@/, '://***@'));
@@ -127,6 +129,7 @@ async function shutdown(signal: string): Promise<void> {
   stopPodsignalWorker();
   stopWorker();
   stopEngineWorker();
+  stopScheduler();
 
   try {
     await stopServer();
