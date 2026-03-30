@@ -28,6 +28,58 @@ import { startPodsignalWorker, stopPodsignalWorker } from './worker/podsignalWor
 import { startWorker, stopWorker } from './worker/index.js';
 import { startEngineWorker, stopEngineWorker } from './engine/worker.js';
 
+/** PaaS DB/Redis can be a few seconds behind the web process; retry so we do not exit(1) before healthchecks pass. */
+const STARTUP_CONNECT_RETRIES = 20;
+const STARTUP_CONNECT_DELAY_MS = 2_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function connectPostgresWithRetry(): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= STARTUP_CONNECT_RETRIES; attempt++) {
+    try {
+      const client = await pool.connect();
+      await client.query('SELECT 1');
+      client.release();
+      console.log('[PodSignal] ✓ Postgres connected (pool min=2, max=10)');
+      return;
+    } catch (err) {
+      lastErr = err;
+      console.warn(
+        `[PodSignal] Postgres connection attempt ${attempt}/${STARTUP_CONNECT_RETRIES} failed:`,
+        err instanceof Error ? err.message : err,
+      );
+      if (attempt < STARTUP_CONNECT_RETRIES) {
+        await sleep(STARTUP_CONNECT_DELAY_MS);
+      }
+    }
+  }
+  throw lastErr;
+}
+
+async function connectRedisWithRetry(): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= STARTUP_CONNECT_RETRIES; attempt++) {
+    try {
+      await connectRedis();
+      console.log('[PodSignal] ✓ Redis connected (healthy=%s)', isRedisHealthy());
+      return;
+    } catch (err) {
+      lastErr = err;
+      console.warn(
+        `[PodSignal] Redis connection attempt ${attempt}/${STARTUP_CONNECT_RETRIES} failed:`,
+        err instanceof Error ? err.message : err,
+      );
+      if (attempt < STARTUP_CONNECT_RETRIES) {
+        await sleep(STARTUP_CONNECT_DELAY_MS);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // ── Startup ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -40,15 +92,11 @@ async function main(): Promise<void> {
   // 2. Start HTTP server first so /health/live responds while Postgres/Redis connect
   await startServer();
 
-  // 3. Connect Postgres
-  const client = await pool.connect();
-  await client.query('SELECT 1');
-  client.release();
-  console.log('[PodSignal] ✓ Postgres connected (pool min=2, max=10)');
+  // 3. Connect Postgres (retry — Railway/private DB often lags the container)
+  await connectPostgresWithRetry();
 
   // 4. Connect Redis
-  await connectRedis();
-  console.log('[PodSignal] ✓ Redis connected (healthy=%s)', isRedisHealthy());
+  await connectRedisWithRetry();
 
   // 5. Queue workers — PodSignal (transcription) + ReviewGuard (reviews, PDF, etc.)
   startPodsignalWorker();

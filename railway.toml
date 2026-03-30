@@ -9,5 +9,6 @@ dockerfilePath = "Dockerfile"
 [deploy]
 # /health also returns 200 while deps warm up (see health.ts); live is minimal
 healthcheckPath = "/health/live"
-healthcheckTimeout = 60
+# Allow Postgres/Redis retry loop (~40s) + margin before marking deploy failed
+healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
