@@ -5,15 +5,17 @@
  *
  * Startup order:
  *   1. Validate env and encryption key
- *   2. Connect Postgres and Redis
- *   3. Start PodSignal worker
- *   4. Start HTTP server
+ *   2. Start HTTP server (listen first — PaaS healthchecks hit /health/live immediately)
+ *   3. Connect Postgres and Redis
+ *   4. Start PodSignal worker
  *
  * Shutdown order (SIGTERM / SIGINT):
  *   1. Stop worker
  *   2. Stop HTTP server
  *   3. Drain Postgres pool
  *   4. Close Redis
+ *
+ * (Startup listens before DB/Redis so PaaS probes succeed while connections establish.)
  */
 
 // env MUST be the first import — it validates all env vars and exits on failure
@@ -33,21 +35,21 @@ async function main(): Promise<void> {
   validateEncryptionKey();
   console.log('[PodSignal] ✓ Encryption key validated');
 
-  // 2. Connect Postgres
+  // 2. Start HTTP server first so /health/live responds while Postgres/Redis connect
+  await startServer();
+
+  // 3. Connect Postgres
   const client = await pool.connect();
   await client.query('SELECT 1');
   client.release();
   console.log('[PodSignal] ✓ Postgres connected (pool min=2, max=10)');
 
-  // 3. Connect Redis
+  // 4. Connect Redis
   await connectRedis();
   console.log('[PodSignal] ✓ Redis connected (healthy=%s)', isRedisHealthy());
 
-  // 4. Start PodSignal queue worker
+  // 5. Start PodSignal queue worker
   startPodsignalWorker();
-
-  // 5. Start HTTP server
-  await startServer();
 
   console.log('\n[PodSignal] ✅  PodSignal — API server ready\n');
   console.log('  DATABASE_URL : %s', env.DATABASE_URL.replace(/:\/\/[^@]+@/, '://***@'));
