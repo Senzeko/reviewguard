@@ -30,6 +30,7 @@ import {
   resolveWorkspacePlan,
   workspaceCapsForPlan,
 } from '../../billing/workspaceCaps.js';
+import { generateEpisodeTitleSuggestions } from '../../podsignal/titleSuggestions.js';
 
 function requireUser(request: FastifyRequest, reply: FastifyReply): string | null {
   const userId = request.user?.userId;
@@ -114,6 +115,11 @@ const listQuerySchema = z.object({
 const workspaceListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(100),
   offset: z.coerce.number().int().min(0).default(0),
+});
+
+const titleSuggestionsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(8).default(3),
+  title: z.string().min(1).max(500).optional(),
 });
 
 // ── Routes ─────────────────────────────────────────────────────────────────
@@ -398,6 +404,66 @@ export async function episodeRoutes(app: FastifyInstance): Promise<void> {
       transcriptSegments: segs,
     });
   });
+
+  // ── GET ranked YouTube title suggestions for an episode ───────────────────
+  app.get(
+    '/:id/title-suggestions',
+    async (
+      request: FastifyRequest<{ Params: { id: string }; Querystring: { limit?: string; title?: string } }>,
+      reply: FastifyReply,
+    ) => {
+      const userId = requireUser(request, reply);
+      if (!userId) return;
+
+      const { id } = request.params;
+      if (!(await assertEpisodeOwned(id, userId))) {
+        return reply.status(404).send({ error: 'Episode not found' });
+      }
+
+      const query = titleSuggestionsQuerySchema.safeParse(request.query);
+      if (!query.success) {
+        return reply.status(400).send({ error: 'Invalid query', details: query.error.issues });
+      }
+
+      const [episode] = await db
+        .select()
+        .from(episodes)
+        .where(eq(episodes.id, id))
+        .limit(1);
+
+      if (!episode) {
+        return reply.status(404).send({ error: 'Episode not found' });
+      }
+
+      const [episodeClips, segs] = await Promise.all([
+        db
+          .select({ title: clips.title })
+          .from(clips)
+          .where(eq(clips.episodeId, id))
+          .orderBy(clips.startSec)
+          .limit(24),
+        db
+          .select({ text: transcriptSegments.text })
+          .from(transcriptSegments)
+          .where(eq(transcriptSegments.episodeId, id))
+          .orderBy(asc(transcriptSegments.seq))
+          .limit(400),
+      ]);
+
+      const result = await generateEpisodeTitleSuggestions(
+        {
+          title: query.data.title?.trim() || episode.title,
+          summary: episode.summary,
+          transcript: episode.transcript,
+          clipTitles: episodeClips.map((c) => c.title),
+          transcriptSegmentTexts: segs.map((s) => s.text),
+        },
+        { limit: query.data.limit, allowLlm: true },
+      );
+
+      return reply.send(result);
+    },
+  );
 
   // ── CREATE episode ─────────────────────────────────────────────────────
   app.post('/', async (request: FastifyRequest, reply: FastifyReply) => {

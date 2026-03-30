@@ -317,6 +317,31 @@ export async function processEpisode(id: string): Promise<{
   return data;
 }
 
+export interface EpisodeTitleSuggestion {
+  label: string;
+  score: number;
+  reason: string;
+}
+
+export async function fetchEpisodeTitleSuggestions(
+  episodeId: string,
+  limit = 3,
+  opts?: { titleOverride?: string },
+): Promise<{
+  suggestions: EpisodeTitleSuggestion[];
+  usedLlm: boolean;
+  generatedAt: string;
+}> {
+  const { data } = await api.get<{
+    suggestions: EpisodeTitleSuggestion[];
+    usedLlm: boolean;
+    generatedAt: string;
+  }>(`/api/episodes/${episodeId}/title-suggestions`, {
+    params: { limit, ...(opts?.titleOverride ? { title: opts.titleOverride } : {}) },
+  });
+  return data;
+}
+
 export async function uploadEpisodeAudio(
   episodeId: string,
   file: File,

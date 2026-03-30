@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   fetchBillingQuotaStatus,
   fetchEpisode,
+  fetchEpisodeTitleSuggestions,
   patchEpisode,
   patchEpisodeClip,
   deleteEpisode,
@@ -15,16 +16,118 @@ import { trackOutputUsage } from '../lib/trackOutputUsage';
 import { useEpisodeLiveUpdates } from '../hooks/useEpisodeLiveUpdates';
 import { loadDraft, removeDraft, saveDraft } from '../lib/draftStorage';
 import { getUserFacingApiError } from '../api/userFacingError';
+import type { EpisodeClipRow, TranscriptSegmentRow } from '../types/podsignal';
 
 function isRequestCanceled(err: unknown): boolean {
   const e = err as { code?: string; name?: string };
   return e.code === 'ERR_CANCELED' || e.name === 'CanceledError';
 }
 
-function buildTitleVariants(title: string): string[] {
-  const t = title.trim();
-  if (!t) return ['Episode title', 'Episode — highlights', 'Interview episode'];
-  return [t, `${t} — key takeaways`, `Interview: ${t}`];
+const TITLE_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'how', 'in', 'into', 'is', 'it',
+  'of', 'on', 'or', 'that', 'the', 'their', 'this', 'to', 'we', 'what', 'when', 'where', 'with', 'you',
+  'your', 'our', 'about', 'after', 'before', 'during', 'episode', 'podcast', 'interview',
+]);
+
+function normalizeTitleText(input: string): string {
+  return input.replace(/\s+/g, ' ').trim();
+}
+
+function toTitleCase(input: string): string {
+  return input
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.slice(0, 1).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function trimToLength(input: string, max = 70): string {
+  const s = normalizeTitleText(input);
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const noHalfWord = cut.replace(/\s+\S*$/, '').trim();
+  return `${(noHalfWord || cut).trim()}…`;
+}
+
+function extractTopTerms(text: string, limit: number): string[] {
+  const counts = new Map<string, number>();
+  const words = text.toLowerCase().match(/[a-z0-9']+/g) ?? [];
+  for (const w of words) {
+    const cleaned = w.replace(/^'+|'+$/g, '');
+    if (cleaned.length < 4) continue;
+    if (TITLE_STOP_WORDS.has(cleaned)) continue;
+    counts.set(cleaned, (counts.get(cleaned) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] - a[1]))
+    .slice(0, limit)
+    .map(([term]) => term);
+}
+
+function chooseTopicPhrase(terms: string[]): string | null {
+  if (!terms.length) return null;
+  if (terms.length === 1) return toTitleCase(terms[0]);
+  return toTitleCase(`${terms[0]} ${terms[1]}`);
+}
+
+function buildTitleVariants(input: {
+  title: string;
+  summary: string | null;
+  transcript: string | null;
+  clips: EpisodeClipRow[];
+  transcriptSegments: TranscriptSegmentRow[];
+}): string[] {
+  const baseTitle = normalizeTitleText(input.title);
+  if (!baseTitle) return ['Episode title', 'Episode highlights', 'Best moments from this episode'];
+
+  const clipTitles = input.clips.slice(0, 4).map((c) => c.title).join(' ');
+  const segmentText = input.transcriptSegments
+    .slice(0, 12)
+    .map((s) => s.text)
+    .join(' ');
+  const context = [input.summary ?? '', clipTitles, segmentText, input.transcript?.slice(0, 900) ?? '']
+    .join(' ')
+    .trim();
+  const topTerms = extractTopTerms(context, 6);
+  const topicPhrase = chooseTopicPhrase(topTerms);
+  const firstClip = normalizeTitleText(input.clips[0]?.title ?? '');
+
+  const rawCandidates = [
+    baseTitle,
+    topicPhrase ? `${baseTitle} | ${topicPhrase}` : `${baseTitle} | Key moments`,
+    topicPhrase ? `How ${topicPhrase} actually works (${baseTitle})` : `What this episode gets right: ${baseTitle}`,
+    firstClip ? `${firstClip} — from ${baseTitle}` : `${baseTitle} — Highlights and takeaways`,
+    topicPhrase ? `${topicPhrase}: ${baseTitle}` : `${baseTitle} — Deep dive`,
+    topTerms[2] ? `${toTitleCase(topTerms[2])} insights from ${baseTitle}` : `${baseTitle} — Practical insights`,
+  ]
+    .map((s) => trimToLength(s))
+    .filter(Boolean);
+
+  const seen = new Set<string>();
+  const uniqueCandidates = rawCandidates.filter((c) => {
+    const key = c.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const scored = uniqueCandidates
+    .map((candidate) => {
+      const normalized = candidate.toLowerCase();
+      const lenDelta = Math.abs(candidate.length - 58);
+      const lenScore = Math.max(0, 1 - lenDelta / 58);
+      const keywordHits = topTerms.reduce((acc, term) => (normalized.includes(term) ? acc + 1 : acc), 0);
+      const keywordScore = Math.min(0.45, keywordHits * 0.15);
+      const structureBonus = /[:|?]/.test(candidate) ? 0.08 : 0;
+      return { candidate, score: lenScore + keywordScore + structureBonus };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((s) => s.candidate);
+
+  if (scored.length >= 3) return scored;
+  const fallback = [`${baseTitle} — Highlights`, `${baseTitle} — Deep dive`];
+  return [...scored, ...fallback].slice(0, 3);
 }
 
 function formatMs(ms: number): string {
@@ -66,6 +169,10 @@ export function EpisodeDetailPage() {
   const [draftRestoredBanner, setDraftRestoredBanner] = useState(false);
   const [titleVariantIdx, setTitleVariantIdx] = useState(0);
   const [billingQuota, setBillingQuota] = useState<{ reviewsUsed: number; reviewLimit: number } | null>(null);
+  const [serverTitleSuggestions, setServerTitleSuggestions] = useState<string[]>([]);
+  const [serverTitleSuggestionsUsedLlm, setServerTitleSuggestionsUsedLlm] = useState(false);
+  const [titleSuggestionsLoading, setTitleSuggestionsLoading] = useState(false);
+  const [serverTitleSuggestionsForTitle, setServerTitleSuggestionsForTitle] = useState('');
 
   const userEditedRef = useRef({ title: false, audioUrl: false });
   const baselineUpdatedAtRef = useRef<string | null>(null);
@@ -141,6 +248,34 @@ export function EpisodeDetailPage() {
       payload: { podcastId: episode.podcastId },
     });
   }, [episodeId, episode]);
+
+  const loadServerTitleSuggestions = useCallback(
+    async (titleOverride?: string) => {
+      if (!episodeId) return;
+      const requestedTitle = (titleOverride ?? title).trim();
+      setTitleSuggestionsLoading(true);
+      try {
+        const data = await fetchEpisodeTitleSuggestions(episodeId, 3, {
+          titleOverride: requestedTitle || undefined,
+        });
+        setServerTitleSuggestions(data.suggestions.map((s) => s.label));
+        setServerTitleSuggestionsUsedLlm(data.usedLlm);
+        setServerTitleSuggestionsForTitle(requestedTitle);
+      } catch {
+        setServerTitleSuggestions([]);
+        setServerTitleSuggestionsUsedLlm(false);
+        setServerTitleSuggestionsForTitle('');
+      } finally {
+        setTitleSuggestionsLoading(false);
+      }
+    },
+    [episodeId, title],
+  );
+
+  useEffect(() => {
+    if (!episodeId || !episode) return;
+    void loadServerTitleSuggestions(episode.title);
+  }, [episodeId, episode?.updatedAt, loadServerTitleSuggestions]);
 
   useEffect(() => {
     if (!episodeId || !episode) return;
@@ -347,6 +482,25 @@ export function EpisodeDetailPage() {
     episode.status !== 'ARCHIVED' &&
     episode.status !== 'PUBLISHED' &&
     !processingQuotaExceeded;
+
+  const fallbackTitleVariants = buildTitleVariants({
+    title,
+    summary: episode.summary,
+    transcript: episode.transcript,
+    clips: episode.clips,
+    transcriptSegments: episode.transcriptSegments,
+  });
+
+  const youtubeTitleVariants =
+    title.trim() === serverTitleSuggestionsForTitle && serverTitleSuggestions.length > 0
+      ? serverTitleSuggestions
+      : fallbackTitleVariants;
+
+  useEffect(() => {
+    if (titleVariantIdx >= youtubeTitleVariants.length) {
+      setTitleVariantIdx(0);
+    }
+  }, [titleVariantIdx, youtubeTitleVariants.length]);
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
@@ -770,8 +924,36 @@ export function EpisodeDetailPage() {
         <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>
           Pick a primary title variant for packaging (observed selection in PodSignal).
         </p>
+        <p style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 10 }}>
+          {titleSuggestionsLoading
+            ? 'Generating ranked options from transcript context...'
+            : serverTitleSuggestions.length > 0 && title.trim() === serverTitleSuggestionsForTitle
+              ? serverTitleSuggestionsUsedLlm
+                ? 'AI-ranked from transcript, clips, and summary.'
+                : 'Heuristically ranked from transcript, clips, and summary.'
+              : 'Using local fallback options. Click regenerate to rank current title context.'}
+        </p>
+        <div style={{ marginBottom: 10 }}>
+          <button
+            type="button"
+            onClick={() => void loadServerTitleSuggestions(title)}
+            disabled={titleSuggestionsLoading}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 8,
+              border: '1px solid #d1d5db',
+              background: '#fff',
+              color: '#374151',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: titleSuggestionsLoading ? 'wait' : 'pointer',
+            }}
+          >
+            {titleSuggestionsLoading ? 'Regenerating...' : 'Regenerate titles'}
+          </button>
+        </div>
         <div style={{ display: 'grid', gap: 8 }}>
-          {buildTitleVariants(title).map((label, idx) => (
+          {youtubeTitleVariants.map((label, idx) => (
             <label
               key={idx}
               style={{

@@ -1,0 +1,265 @@
+/**
+ * Episode title suggestions with deterministic scoring and optional LLM reranking.
+ * Never throws from the public API; falls back to heuristic ordering.
+ */
+
+export interface EpisodeTitleSuggestionInput {
+  title: string;
+  summary: string | null;
+  transcript: string | null;
+  clipTitles: string[];
+  transcriptSegmentTexts: string[];
+}
+
+export interface EpisodeTitleSuggestion {
+  label: string;
+  score: number;
+  reason: string;
+}
+
+export interface EpisodeTitleSuggestionResult {
+  suggestions: EpisodeTitleSuggestion[];
+  usedLlm: boolean;
+  generatedAt: string;
+}
+
+const TITLE_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'how', 'in', 'into', 'is', 'it',
+  'of', 'on', 'or', 'that', 'the', 'their', 'this', 'to', 'we', 'what', 'when', 'where', 'with', 'you',
+  'your', 'our', 'about', 'after', 'before', 'during', 'episode', 'podcast', 'interview',
+]);
+
+const MAX_TITLE_LEN = 70;
+const TARGET_TITLE_LEN = 58;
+
+let _client: unknown = null;
+
+function normalizeText(input: string): string {
+  return input.replace(/\s+/g, ' ').trim();
+}
+
+function toTitleCase(input: string): string {
+  return input
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.slice(0, 1).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function trimToLength(input: string, max = MAX_TITLE_LEN): string {
+  const s = normalizeText(input);
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const noHalfWord = cut.replace(/\s+\S*$/, '').trim();
+  return `${(noHalfWord || cut).trim()}...`;
+}
+
+function extractTopTerms(text: string, limit: number): string[] {
+  const counts = new Map<string, number>();
+  const words = text.toLowerCase().match(/[a-z0-9']+/g) ?? [];
+  for (const w of words) {
+    const cleaned = w.replace(/^'+|'+$/g, '');
+    if (cleaned.length < 4) continue;
+    if (TITLE_STOP_WORDS.has(cleaned)) continue;
+    counts.set(cleaned, (counts.get(cleaned) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] - a[1]))
+    .slice(0, limit)
+    .map(([term]) => term);
+}
+
+function chooseTopicPhrase(terms: string[]): string | null {
+  const first = terms[0];
+  if (!first) return null;
+  if (terms.length === 1) return toTitleCase(first);
+  const second = terms[1];
+  if (!first || !second) return first ? toTitleCase(first) : null;
+  return toTitleCase(`${first} ${second}`);
+}
+
+function buildContext(input: EpisodeTitleSuggestionInput): string {
+  const pieces = [
+    input.summary ?? '',
+    input.clipTitles.slice(0, 8).join(' '),
+    input.transcriptSegmentTexts.slice(0, 120).join(' '),
+    (input.transcript ?? '').slice(0, 9000),
+  ];
+  return normalizeText(pieces.join(' '));
+}
+
+function buildRawCandidates(input: EpisodeTitleSuggestionInput, topTerms: string[]): string[] {
+  const baseTitle = normalizeText(input.title);
+  const topicPhrase = chooseTopicPhrase(topTerms);
+  const firstClip = normalizeText(input.clipTitles[0] ?? '');
+  const secondTopic = topTerms[2] ? toTitleCase(topTerms[2]) : null;
+
+  return [
+    baseTitle,
+    topicPhrase ? `${baseTitle} | ${topicPhrase}` : `${baseTitle} | Key moments`,
+    topicPhrase ? `How ${topicPhrase} actually works (${baseTitle})` : `What this episode gets right: ${baseTitle}`,
+    firstClip ? `${firstClip} - from ${baseTitle}` : `${baseTitle} - Highlights and takeaways`,
+    topicPhrase ? `${topicPhrase}: ${baseTitle}` : `${baseTitle} - Deep dive`,
+    secondTopic ? `${secondTopic} insights from ${baseTitle}` : `${baseTitle} - Practical insights`,
+    topicPhrase ? `${baseTitle}: ${topicPhrase} breakdown` : `${baseTitle}: Full breakdown`,
+    topicPhrase ? `The real story on ${topicPhrase} (${baseTitle})` : `${baseTitle} - What matters most`,
+  ];
+}
+
+function dedupeCandidates(candidates: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const c of candidates) {
+    const trimmed = trimToLength(c);
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function scoreDeterministicCandidates(candidates: string[], topTerms: string[]): EpisodeTitleSuggestion[] {
+  return candidates
+    .map((candidate) => {
+      const normalized = candidate.toLowerCase();
+      const lenDelta = Math.abs(candidate.length - TARGET_TITLE_LEN);
+      const lenScore = Math.max(0, 1 - lenDelta / TARGET_TITLE_LEN);
+      const keywordHits = topTerms.reduce((acc, term) => (normalized.includes(term) ? acc + 1 : acc), 0);
+      const keywordScore = Math.min(0.45, keywordHits * 0.15);
+      const structureBonus = /[:|?]/.test(candidate) ? 0.08 : 0;
+      const score = Number((lenScore + keywordScore + structureBonus).toFixed(4));
+      return {
+        label: candidate,
+        score,
+        reason: `Heuristic score: length-fit + keyword overlap (${keywordHits})`,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
+}
+
+async function getClient(): Promise<InstanceType<typeof import('@anthropic-ai/sdk').default>> {
+  if (!_client) {
+    const { env } = await import('../env.js');
+    const { default: Anthropic } = await import('@anthropic-ai/sdk');
+    _client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  }
+  return _client as InstanceType<typeof import('@anthropic-ai/sdk').default>;
+}
+
+async function rerankWithLlm(
+  input: EpisodeTitleSuggestionInput,
+  scored: EpisodeTitleSuggestion[],
+): Promise<EpisodeTitleSuggestion[] | null> {
+  const candidates = scored.map((s) => s.label);
+  if (candidates.length <= 1) return scored;
+
+  const system = [
+    'You are a podcast YouTube title ranker.',
+    'Pick the best titles for click clarity without clickbait.',
+    'Use transcript and summary relevance, specificity, and readability.',
+    'Return only JSON matching this schema:',
+    '{"ranked":[{"title":"string","score":0-1,"reason":"string"}]}',
+    'Only use provided candidate titles. No new titles.',
+  ].join(' ');
+
+  const userContent = JSON.stringify({
+    episodeTitle: input.title,
+    summary: input.summary ?? '',
+    clipTitles: input.clipTitles.slice(0, 8),
+    transcriptExcerpt: (input.transcript ?? '').slice(0, 6000),
+    candidates,
+  });
+
+  try {
+    const client = await getClient();
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 700,
+      temperature: 0,
+      system,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    const block = message.content[0];
+    const raw = block && block.type === 'text' ? block.text : '';
+    if (!raw) return null;
+
+    const parsed: unknown = JSON.parse(raw);
+    const ranked = (parsed as { ranked?: Array<{ title?: string; score?: number; reason?: string }> })?.ranked;
+    if (!Array.isArray(ranked)) return null;
+
+    const scoreByLabel = new Map(scored.map((s) => [s.label, s]));
+    const out: EpisodeTitleSuggestion[] = [];
+    for (const row of ranked) {
+      const label = typeof row.title === 'string' ? row.title : '';
+      if (!label || !scoreByLabel.has(label)) continue;
+      const score =
+        typeof row.score === 'number' && Number.isFinite(row.score)
+          ? Math.max(0, Math.min(1, row.score))
+          : scoreByLabel.get(label)!.score;
+      const reason =
+        typeof row.reason === 'string' && row.reason.trim().length > 0
+          ? row.reason.trim()
+          : 'LLM-ranked';
+      out.push({ label, score: Number(score.toFixed(4)), reason });
+    }
+    if (!out.length) return null;
+
+    const missing = scored.filter((s) => !out.some((o) => o.label === s.label));
+    return [...out, ...missing];
+  } catch {
+    return null;
+  }
+}
+
+export async function generateEpisodeTitleSuggestions(
+  input: EpisodeTitleSuggestionInput,
+  opts?: { limit?: number; allowLlm?: boolean },
+): Promise<EpisodeTitleSuggestionResult> {
+  const limit = Math.min(8, Math.max(1, opts?.limit ?? 3));
+  const baseTitle = normalizeText(input.title);
+  if (!baseTitle) {
+    return {
+      suggestions: [
+        { label: 'Episode title', score: 0.5, reason: 'Fallback title' },
+        { label: 'Episode highlights', score: 0.49, reason: 'Fallback title' },
+        { label: 'Best moments from this episode', score: 0.48, reason: 'Fallback title' },
+      ].slice(0, limit),
+      usedLlm: false,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  const context = buildContext(input);
+  const topTerms = extractTopTerms(context, 8);
+  const rawCandidates = buildRawCandidates(input, topTerms);
+  const unique = dedupeCandidates(rawCandidates);
+  const deterministic = scoreDeterministicCandidates(unique, topTerms);
+
+  let ranked = deterministic;
+  let usedLlm = false;
+  if (opts?.allowLlm !== false) {
+    const llmRanked = await rerankWithLlm(input, deterministic);
+    if (llmRanked) {
+      ranked = llmRanked;
+      usedLlm = true;
+    }
+  }
+
+  return {
+    suggestions: ranked.slice(0, limit),
+    usedLlm,
+    generatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildDeterministicTitleCandidatesForTest(
+  input: EpisodeTitleSuggestionInput,
+): EpisodeTitleSuggestion[] {
+  const context = buildContext(input);
+  const topTerms = extractTopTerms(context, 8);
+  const rawCandidates = buildRawCandidates(input, topTerms);
+  const unique = dedupeCandidates(rawCandidates);
+  return scoreDeterministicCandidates(unique, topTerms);
+}
