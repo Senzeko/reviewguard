@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { fetchWorkspaceEpisodes } from '../api/client';
+import { fetchEpisodes, fetchPodcasts, fetchWorkspaceEpisodes } from '../api/client';
 import { getUserFacingApiError } from '../api/userFacingError';
 import type { Episode } from '../types/podsignal';
 import './podsignal-pages.css';
@@ -26,26 +26,55 @@ export function EpisodesListPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
+  const [usingFallback, setUsingFallback] = useState(false);
+
+  const loadFallbackByShows = useCallback(async (): Promise<{ episodes: Row[]; total: number }> => {
+    const { podcasts } = await fetchPodcasts();
+    if (podcasts.length === 0) return { episodes: [], total: 0 };
+
+    const pages = await Promise.all(
+      podcasts.map(async (p) => {
+        const data = await fetchEpisodes({ podcastId: p.id, limit: 100, offset: 0 });
+        return data.episodes.map((ep) => ({ ...ep, podcastTitle: p.title }));
+      }),
+    );
+
+    const merged = pages.flat();
+    const byId = new Map<string, Row>();
+    for (const row of merged) byId.set(row.id, row);
+    const sorted = [...byId.values()].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    return { episodes: sorted, total: sorted.length };
+  }, []);
 
   const loadInitial = useCallback(() => {
     setError('');
     setLoading(true);
+    setUsingFallback(false);
     fetchWorkspaceEpisodes({ limit: PAGE_SIZE, offset: 0 })
-      .then(({ episodes, total: t }) => {
-        const sorted = [...episodes].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+      .then(async ({ episodes, total: t }) => {
+        const safeEpisodes = Array.isArray(episodes) ? episodes : [];
+        const hasRowData = safeEpisodes.some((e) => typeof e?.podcastTitle === 'string');
+        if (safeEpisodes.length === 0 || !hasRowData) {
+          const fallback = await loadFallbackByShows();
+          setRows(fallback.episodes);
+          setTotal(fallback.total);
+          setUsingFallback(true);
+          return;
+        }
+        const sorted = [...safeEpisodes].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
         setRows(sorted);
-        setTotal(t);
+        setTotal(typeof t === 'number' ? t : sorted.length);
       })
       .catch((e) => setError(getUserFacingApiError(e, 'Failed to load episodes')))
       .finally(() => setLoading(false));
-  }, []);
+  }, [loadFallbackByShows]);
 
   useEffect(() => {
     void loadInitial();
   }, [loadInitial]);
 
   const loadMore = useCallback(() => {
-    if (loadingMore || rows.length >= total) return;
+    if (loadingMore || rows.length >= total || usingFallback) return;
     setLoadingMore(true);
     setError('');
     fetchWorkspaceEpisodes({ limit: PAGE_SIZE, offset: rows.length })
@@ -62,7 +91,7 @@ export function EpisodesListPage() {
       })
       .catch((e) => setError(getUserFacingApiError(e, 'Failed to load more')))
       .finally(() => setLoadingMore(false));
-  }, [loadingMore, rows.length, total]);
+  }, [loadingMore, rows.length, total, usingFallback]);
 
   const filtered = rows.filter((r) => {
     const s = q.trim().toLowerCase();
@@ -91,6 +120,7 @@ export function EpisodesListPage() {
       <div className="ps-card" style={{ padding: 12 }}>
         <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 10px' }}>
           Search filters your loaded episodes. Show/status/date filters are not available in this build.
+          {usingFallback ? ' Loaded via show-by-show fallback mode.' : ''}
         </p>
         <input
           className="ps-input"
