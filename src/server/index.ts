@@ -27,6 +27,9 @@ import { campaignRoutes } from './routes/campaigns.js';
 import { onboardingRoutes } from './routes/onboarding.js';
 import { analyticsRoutes } from './routes/analytics.js';
 import { podsignalRoutes } from './routes/podsignal.js';
+import { webhookRoutes } from './routes/webhooks.js';
+import { disputeRoutes } from './routes/disputes.js';
+import { consoleRoutes } from './routes/console.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -50,6 +53,10 @@ export async function startServer(): Promise<FastifyInstance> {
   // Core routes
   await app.register(healthRoutes);
   await app.register(trackRedirectRoutes);
+  // ReviewGuard — webhook ingress, console, PDF export (E2E + legacy flows)
+  await app.register(webhookRoutes, { prefix: '/webhooks' });
+  await app.register(disputeRoutes);
+  await app.register(consoleRoutes, { prefix: '/api/console' });
   await app.register(authRoutes, { prefix: '/api/auth' });
   await app.register(onboardingRoutes, { prefix: '/api/onboarding' });
   await app.register(sseRoutes, { prefix: '/api/sse' });
@@ -75,7 +82,8 @@ export async function startServer(): Promise<FastifyInstance> {
       if (
         request.method === 'GET' &&
         !request.url.startsWith('/api') &&
-        !request.url.startsWith('/health')
+        !request.url.startsWith('/health') &&
+        !request.url.startsWith('/webhooks')
       ) {
         return reply.sendFile('index.html');
       }

@@ -7,7 +7,7 @@
  *   1. Validate env and encryption key
  *   2. Start HTTP server (listen first — PaaS healthchecks hit /health/live immediately)
  *   3. Connect Postgres and Redis
- *   4. Start PodSignal worker
+ *   4. Start PodSignal worker + ReviewGuard queue worker (webhook scoring, PDF jobs)
  *
  * Shutdown order (SIGTERM / SIGINT):
  *   1. Stop worker
@@ -25,6 +25,7 @@ import { pool, closeDb } from './db/index.js';
 import { connectRedis, closeRedis, isRedisHealthy } from './queue/client.js';
 import { startServer, stopServer } from './server/index.js';
 import { startPodsignalWorker, stopPodsignalWorker } from './worker/podsignalWorker.js';
+import { startWorker, stopWorker } from './worker/index.js';
 
 // ── Startup ────────────────────────────────────────────────────────────────────
 
@@ -48,8 +49,9 @@ async function main(): Promise<void> {
   await connectRedis();
   console.log('[PodSignal] ✓ Redis connected (healthy=%s)', isRedisHealthy());
 
-  // 5. Start PodSignal queue worker
+  // 5. Queue workers — PodSignal (transcription) + ReviewGuard (reviews, PDF, etc.)
   startPodsignalWorker();
+  startWorker();
 
   console.log('\n[PodSignal] ✅  PodSignal — API server ready\n');
   console.log('  DATABASE_URL : %s', env.DATABASE_URL.replace(/:\/\/[^@]+@/, '://***@'));
@@ -68,6 +70,7 @@ async function shutdown(signal: string): Promise<void> {
 
   console.log(`\n[PodSignal] Received ${signal} — shutting down gracefully…`);
   stopPodsignalWorker();
+  stopWorker();
 
   try {
     await stopServer();
