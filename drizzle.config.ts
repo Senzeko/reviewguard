@@ -1,10 +1,9 @@
 import type { Config } from 'drizzle-kit';
 import { config } from 'dotenv';
 
-// Load .env so drizzle-kit CLI picks up DATABASE_URL without requiring
-// the user to manually export it in their shell.
-// In CI, do not override — workflow DATABASE_URL must win over any local .env.
-config({ override: process.env.CI !== 'true' });
+// Load .env so drizzle-kit CLI picks up DATABASE_URL when shell env is absent.
+// Never override existing env vars: Railway/CI injected DATABASE_URL must win.
+config();
 
 // We load DATABASE_URL directly here to avoid a circular dependency
 // (env.ts imports from this file indirectly via drizzle-kit CLI).

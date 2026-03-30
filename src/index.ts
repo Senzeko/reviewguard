@@ -36,6 +36,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function maskRedisUrl(url: string): string {
+  // redis://user:pass@host:port/db -> redis://***@host:port/db
+  return url.replace(/:\/\/[^@]+@/, '://***@');
+}
+
 async function connectPostgresWithRetry(): Promise<void> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= STARTUP_CONNECT_RETRIES; attempt++) {
@@ -105,7 +110,7 @@ async function main(): Promise<void> {
 
   console.log('\n[PodSignal] ✅  PodSignal — API server ready\n');
   console.log('  DATABASE_URL : %s', env.DATABASE_URL.replace(/:\/\/[^@]+@/, '://***@'));
-  console.log('  REDIS_URL    : %s', env.REDIS_URL);
+  console.log('  REDIS_URL    : %s', maskRedisUrl(env.REDIS_URL));
   console.log('  PORT         : %d', env.PORT);
   console.log('');
 }

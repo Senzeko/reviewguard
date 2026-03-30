@@ -12,9 +12,8 @@ import { z } from 'zod';
 import { config } from 'dotenv';
 
 // Load .env file into process.env before validation.
-// override: true (local) lets .env win over empty shell vars (e.g. ANTHROPIC_API_KEY).
-// In CI, override: false so DATABASE_URL etc. from the workflow are never replaced by a stray .env.
-config({ override: process.env.CI !== 'true' });
+// Never override existing environment variables: platform-injected secrets/URLs must win.
+config();
 
 const envSchema = z.object({
 // ── Database ───────────────────────────────────────────────────────────────

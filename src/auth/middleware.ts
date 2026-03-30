@@ -20,6 +20,7 @@ const PUBLIC_PREFIXES = [
   '/webhooks/',
   '/api/auth/signup',
   '/api/auth/login',
+  '/api/billing/webhook',
   '/oauth/',
   '/internal/',
 ];

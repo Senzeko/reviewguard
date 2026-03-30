@@ -30,6 +30,8 @@ import { podsignalRoutes } from './routes/podsignal.js';
 import { webhookRoutes } from './routes/webhooks.js';
 import { disputeRoutes } from './routes/disputes.js';
 import { consoleRoutes } from './routes/console.js';
+import { settingsRoutes } from './routes/settings.js';
+import { oauthRoutes } from './routes/oauth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -67,6 +69,8 @@ export async function startServer(): Promise<FastifyInstance> {
   await app.register(campaignRoutes, { prefix: '/api/episodes' });
   await app.register(analyticsRoutes, { prefix: '/api/analytics' });
   await app.register(podsignalRoutes, { prefix: '/api/podsignal' });
+  await app.register(settingsRoutes, { prefix: '/api/settings' });
+  await app.register(oauthRoutes, { prefix: '/oauth' });
 
   // Serve React build if it exists
   const clientDist = path.join(__dirname, '../../client/dist');
