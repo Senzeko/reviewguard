@@ -5,15 +5,17 @@
  *
  * Startup order:
  *   1. Validate env and encryption key
- *   2. Connect Postgres and Redis
- *   3. Start PodSignal worker
- *   4. Start HTTP server
+ *   2. Start HTTP server (listen first — PaaS healthchecks hit /health/live immediately)
+ *   3. Connect Postgres and Redis
+ *   4. Start PodSignal worker + ReviewGuard queue worker (webhook scoring, PDF jobs)
  *
  * Shutdown order (SIGTERM / SIGINT):
  *   1. Stop worker
  *   2. Stop HTTP server
  *   3. Drain Postgres pool
  *   4. Close Redis
+ *
+ * (Startup listens before DB/Redis so PaaS probes succeed while connections establish.)
  */
 
 // env MUST be the first import — it validates all env vars and exits on failure
@@ -23,6 +25,7 @@ import { pool, closeDb } from './db/index.js';
 import { connectRedis, closeRedis, isRedisHealthy } from './queue/client.js';
 import { startServer, stopServer } from './server/index.js';
 import { startPodsignalWorker, stopPodsignalWorker } from './worker/podsignalWorker.js';
+import { startWorker, stopWorker } from './worker/index.js';
 
 // ── Startup ────────────────────────────────────────────────────────────────────
 
@@ -33,21 +36,22 @@ async function main(): Promise<void> {
   validateEncryptionKey();
   console.log('[PodSignal] ✓ Encryption key validated');
 
-  // 2. Connect Postgres
+  // 2. Start HTTP server first so /health/live responds while Postgres/Redis connect
+  await startServer();
+
+  // 3. Connect Postgres
   const client = await pool.connect();
   await client.query('SELECT 1');
   client.release();
   console.log('[PodSignal] ✓ Postgres connected (pool min=2, max=10)');
 
-  // 3. Connect Redis
+  // 4. Connect Redis
   await connectRedis();
   console.log('[PodSignal] ✓ Redis connected (healthy=%s)', isRedisHealthy());
 
-  // 4. Start PodSignal queue worker
+  // 5. Queue workers — PodSignal (transcription) + ReviewGuard (reviews, PDF, etc.)
   startPodsignalWorker();
-
-  // 5. Start HTTP server
-  await startServer();
+  startWorker();
 
   console.log('\n[PodSignal] ✅  PodSignal — API server ready\n');
   console.log('  DATABASE_URL : %s', env.DATABASE_URL.replace(/:\/\/[^@]+@/, '://***@'));
@@ -66,6 +70,7 @@ async function shutdown(signal: string): Promise<void> {
 
   console.log(`\n[PodSignal] Received ${signal} — shutting down gracefully…`);
   stopPodsignalWorker();
+  stopWorker();
 
   try {
     await stopServer();
