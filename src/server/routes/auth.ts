@@ -12,12 +12,20 @@ import { hashPassword, verifyPassword } from '../../auth/password.js';
 import { createSession, destroySession } from '../../auth/session.js';
 import { buildAuthUserPayload } from '../../auth/authUserPayload.js';
 
-const COOKIE_OPTS = {
+const SESSION_COOKIE_BASE = {
   httpOnly: true,
   sameSite: 'lax' as const,
   path: '/',
   maxAge: 7 * 24 * 3600, // 7 days in seconds
 };
+
+/** Secure in production so browsers accept the cookie on HTTPS (Railway, custom domains). */
+function sessionCookieOpts(): typeof SESSION_COOKIE_BASE & { secure: boolean } {
+  return {
+    ...SESSION_COOKIE_BASE,
+    secure: process.env.NODE_ENV === 'production',
+  };
+}
 
 function isPgUniqueViolation(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: string }).code === '23505';
@@ -68,7 +76,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       // Create session
       const token = await createSession(user!.id);
 
-      reply.setCookie('session_token', token, COOKIE_OPTS);
+      reply.setCookie('session_token', token, sessionCookieOpts());
       const payload = await buildAuthUserPayload(user!.id);
       if (!payload) {
         return reply.status(500).send({ error: 'Could not load new account' });
@@ -117,7 +125,7 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
 
       const token = await createSession(user.id);
 
-      reply.setCookie('session_token', token, COOKIE_OPTS);
+      reply.setCookie('session_token', token, sessionCookieOpts());
       const payload = await buildAuthUserPayload(user.id);
       if (!payload) {
         return reply.status(500).send({ error: 'Could not load account' });
@@ -135,7 +143,11 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     if (token) {
       await destroySession(token);
     }
-    reply.clearCookie('session_token', { path: '/' });
+    reply.clearCookie('session_token', {
+      path: '/',
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+    });
     return reply.send({ ok: true });
   });
 

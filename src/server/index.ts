@@ -36,7 +36,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let app: FastifyInstance | null = null;
 
 export async function startServer(): Promise<FastifyInstance> {
-  app = Fastify({ logger: true });
+  // Railway / other PaaS terminate TLS in front of Node — trust X-Forwarded-* for cookies & HTTPS
+  app = Fastify({ logger: true, trustProxy: true });
 
   await app.register(formbody);
   await app.register(multipart, {
