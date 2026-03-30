@@ -45,6 +45,8 @@ applyHttpPolicy(api);
 
 export interface HealthResponse {
   status: string;
+  /** True when Postgres, Redis, and PodSignal pilot schema are all OK */
+  ready?: boolean;
   db: string;
   redis: string;
   uptime: number;
