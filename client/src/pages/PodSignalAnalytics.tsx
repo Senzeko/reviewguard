@@ -9,6 +9,7 @@ import {
   fetchTitlePresetAnalytics,
   fetchPodsignalReportSummary,
   fetchPodsignalSummary,
+  importYoutubeVideoMetric,
   type HostMetricKey,
   type HostMetricSnapshotRow,
   type PodsignalReportSummary,
@@ -83,7 +84,7 @@ function buildInsights(
     );
   }
   out.push(
-    'Spotify, Apple, YouTube, and ad-dashboard charts are not wired in closed beta. Use those tools directly, log snapshots below, or attach exports if you need listener totals next to PodSignal-observed events.',
+    'Direct host-platform charts are not embedded in-app. Pull YouTube views via API below or log snapshots copied from Spotify/Apple/ads dashboards.',
   );
   return out.slice(0, 6);
 }
@@ -105,6 +106,11 @@ export function PodSignalAnalytics() {
   const [hostFormError, setHostFormError] = useState('');
   const [hostSaving, setHostSaving] = useState(false);
   const [presetAnalytics, setPresetAnalytics] = useState<TitlePresetAnalyticsResponse | null>(null);
+  const [youtubeInput, setYoutubeInput] = useState('');
+  const [youtubeEpisodeId, setYoutubeEpisodeId] = useState('');
+  const [youtubeImporting, setYoutubeImporting] = useState(false);
+  const [youtubeImportError, setYoutubeImportError] = useState('');
+  const [youtubeImportSuccess, setYoutubeImportSuccess] = useState('');
 
   useEffect(() => {
     void trackOutputUsage({
@@ -272,6 +278,39 @@ export function PodSignalAnalytics() {
     }
   }
 
+  async function importYoutubeMetric(e: FormEvent) {
+    e.preventDefault();
+    setYoutubeImportError('');
+    setYoutubeImportSuccess('');
+    if (!youtubeInput.trim()) {
+      setYoutubeImportError('Enter a YouTube URL or 11-char video ID.');
+      return;
+    }
+    setYoutubeImporting(true);
+    try {
+      const res = await importYoutubeVideoMetric({
+        videoUrlOrId: youtubeInput.trim(),
+        episodeId: youtubeEpisodeId || null,
+      });
+      const { snapshots } = await fetchHostMetricSnapshots();
+      setHostSnapshots(snapshots);
+      setYoutubeImportSuccess(
+        `Imported ${res.views.toLocaleString()} views from "${res.title ?? res.videoId}" (${res.channelTitle ?? 'YouTube'}).`,
+      );
+      void trackOutputUsage({
+        eventType: 'host_metric_snapshot_logged',
+        payload: { metricKey: 'youtube_views_7d', source: 'youtube_data_api', episodeId: youtubeEpisodeId || null },
+      });
+    } catch (err: unknown) {
+      const ax = err as { response?: { data?: { error?: string; hint?: string } } };
+      const msg = ax.response?.data?.error ?? 'Could not import YouTube stats.';
+      const hint = ax.response?.data?.hint ? ` ${ax.response.data.hint}` : '';
+      setYoutubeImportError(`${msg}${hint}`);
+    } finally {
+      setYoutubeImporting(false);
+    }
+  }
+
   const windowDays = report?.windowDays ?? 30;
   const clicks = report?.trackableLinkClicksObserved ?? null;
   const usageTotal = report?.outputUsageEventTotal ?? null;
@@ -336,7 +375,7 @@ export function PodSignalAnalytics() {
 
       <p className="analytics-demo-note">
         Figures below are <strong>PodSignal-observed</strong> only (usage events, short-link redirects, checklist proxy).
-        There are no sample listen counts or host-platform charts on this page.
+        Dashboard and analytics cards now use live workspace data only.
       </p>
 
       <div className="analytics-kpi-grid">
@@ -535,6 +574,57 @@ export function PodSignalAnalytics() {
             <strong>History unavailable.</strong> {hostSnapshotsError}
           </p>
         ) : null}
+        <form
+          onSubmit={(e) => void importYoutubeMetric(e)}
+          style={{
+            display: 'grid',
+            gap: 10,
+            marginBottom: 14,
+            padding: 14,
+            background: '#eef2ff',
+            borderRadius: 10,
+            border: '1px solid #c7d2fe',
+          }}
+        >
+          <div style={{ fontSize: 13, color: '#3730a3', fontWeight: 700 }}>Import YouTube views (real API)</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, flex: 1, minWidth: 240 }}>
+              YouTube URL or video ID
+              <input
+                className="analytics-select"
+                style={{ height: 38 }}
+                value={youtubeInput}
+                onChange={(e) => setYoutubeInput(e.target.value)}
+                placeholder="https://www.youtube.com/watch?v=..."
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, minWidth: 220 }}>
+              Episode (optional)
+              <select
+                className="analytics-select"
+                value={youtubeEpisodeId}
+                onChange={(e) => setYoutubeEpisodeId(e.target.value)}
+              >
+                <option value="">Workspace-wide (not tied to one episode)</option>
+                {episodeOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="submit"
+              className="analytics-btn-primary"
+              style={{ border: 'none', height: 38, cursor: youtubeImporting ? 'wait' : 'pointer' }}
+              disabled={youtubeImporting}
+            >
+              {youtubeImporting ? 'Importing…' : 'Import from YouTube'}
+            </button>
+          </div>
+          {youtubeImportError ? <p style={{ margin: 0, fontSize: 13, color: '#b91c1c' }}>{youtubeImportError}</p> : null}
+          {youtubeImportSuccess ? <p style={{ margin: 0, fontSize: 13, color: '#166534' }}>{youtubeImportSuccess}</p> : null}
+        </form>
         <form
           onSubmit={(e) => void submitHostMetric(e)}
           style={{

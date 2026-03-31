@@ -17,7 +17,9 @@ import {
   campaigns,
   campaignTasks,
   podsignalHostMetricSnapshots,
+  podsignalOutputUsage,
 } from '../../db/schema.js';
+import { env } from '../../env.js';
 
 const HOST_METRIC_KEYS = [
   'spotify_streams_7d',
@@ -61,7 +63,215 @@ async function episodeOwnedByUser(episodeId: string, userId: string): Promise<bo
   return !!row;
 }
 
+function extractYoutubeVideoId(input: string): string | null {
+  const raw = input.trim();
+  if (!raw) return null;
+  if (/^[a-zA-Z0-9_-]{11}$/.test(raw)) return raw;
+  try {
+    const u = new URL(raw);
+    if (u.hostname.includes('youtu.be')) {
+      const id = u.pathname.replace(/^\/+/, '').slice(0, 11);
+      return /^[a-zA-Z0-9_-]{11}$/.test(id) ? id : null;
+    }
+    const v = u.searchParams.get('v');
+    if (v && /^[a-zA-Z0-9_-]{11}$/.test(v)) return v;
+    const m = u.pathname.match(/\/shorts\/([a-zA-Z0-9_-]{11})/);
+    return m?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function analyticsRoutes(fastify: FastifyInstance): Promise<void> {
+  // GET /api/analytics/dashboard-feed — real dashboard sections (no sample placeholders)
+  fastify.get('/dashboard-feed', async (request, reply) => {
+    const userId = request.user?.userId;
+    if (!userId) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+
+    const [recentEpisodes, failedEpisodes, openTasks, recentUsage] = await Promise.all([
+      db
+        .select({
+          id: episodes.id,
+          title: episodes.title,
+          status: episodes.status,
+          podcastTitle: podcasts.title,
+          updatedAt: episodes.updatedAt,
+        })
+        .from(episodes)
+        .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+        .where(eq(podcasts.ownerId, userId))
+        .orderBy(desc(episodes.updatedAt))
+        .limit(8),
+      db
+        .select({
+          id: episodes.id,
+          title: episodes.title,
+          processingError: episodes.processingError,
+          podcastTitle: podcasts.title,
+        })
+        .from(episodes)
+        .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+        .where(and(eq(podcasts.ownerId, userId), eq(episodes.status, 'FAILED')))
+        .orderBy(desc(episodes.updatedAt))
+        .limit(8),
+      db
+        .select({
+          id: campaignTasks.id,
+          label: campaignTasks.label,
+          episodeId: episodes.id,
+          episodeTitle: episodes.title,
+          podcastTitle: podcasts.title,
+          campaignStatus: campaigns.status,
+        })
+        .from(campaignTasks)
+        .innerJoin(campaigns, eq(campaignTasks.campaignId, campaigns.id))
+        .innerJoin(episodes, eq(campaigns.episodeId, episodes.id))
+        .innerJoin(podcasts, eq(episodes.podcastId, podcasts.id))
+        .where(and(eq(podcasts.ownerId, userId), eq(campaigns.status, 'ACTIVE'), sql`${campaignTasks.doneAt} is null`))
+        .orderBy(desc(campaignTasks.createdAt))
+        .limit(12),
+      db
+        .select({
+          id: podsignalOutputUsage.id,
+          eventType: podsignalOutputUsage.eventType,
+          createdAt: podsignalOutputUsage.createdAt,
+          episodeId: podsignalOutputUsage.episodeId,
+          episodeTitle: episodes.title,
+        })
+        .from(podsignalOutputUsage)
+        .leftJoin(episodes, eq(podsignalOutputUsage.episodeId, episodes.id))
+        .where(eq(podsignalOutputUsage.userId, userId))
+        .orderBy(desc(podsignalOutputUsage.createdAt))
+        .limit(20),
+    ]);
+
+    const attentionItems = [
+      ...failedEpisodes.map((f) => ({
+        type: 'failed_episode' as const,
+        episodeId: f.id,
+        episodeTitle: f.title,
+        podcastTitle: f.podcastTitle,
+        detail: f.processingError ?? 'Processing failed',
+      })),
+      ...openTasks.slice(0, 10).map((t) => ({
+        type: 'open_task' as const,
+        episodeId: t.episodeId,
+        episodeTitle: t.episodeTitle,
+        podcastTitle: t.podcastTitle,
+        detail: t.label,
+      })),
+    ];
+
+    return reply.send({
+      recentEpisodes: recentEpisodes.map((e) => ({
+        id: e.id,
+        title: e.title,
+        status: e.status,
+        podcastTitle: e.podcastTitle,
+        updatedAt: e.updatedAt.toISOString(),
+      })),
+      attentionItems,
+      recentActivity: recentUsage.map((u) => ({
+        id: u.id,
+        eventType: u.eventType,
+        createdAt: u.createdAt.toISOString(),
+        episodeId: u.episodeId,
+        episodeTitle: u.episodeTitle ?? null,
+      })),
+    });
+  });
+
+  // POST /api/analytics/youtube/import — pull real YouTube video stats and store as host metric snapshot
+  fastify.post<{
+    Body: { videoUrlOrId: string; episodeId?: string | null };
+  }>('/youtube/import', async (request, reply) => {
+    const userId = request.user?.userId;
+    if (!userId) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+    if (!env.YOUTUBE_DATA_API_KEY) {
+      return reply.status(503).send({
+        error: 'YouTube integration is not configured',
+        code: 'YOUTUBE_NOT_CONFIGURED',
+        hint: 'Set YOUTUBE_DATA_API_KEY in environment variables.',
+      });
+    }
+
+    const raw = request.body?.videoUrlOrId?.trim() ?? '';
+    const episodeId = request.body?.episodeId ?? null;
+    const videoId = extractYoutubeVideoId(raw);
+    if (!videoId) {
+      return reply.status(400).send({ error: 'Invalid YouTube video URL or ID' });
+    }
+    if (episodeId) {
+      const ok = await episodeOwnedByUser(episodeId, userId);
+      if (!ok) {
+        return reply.status(403).send({ error: 'Episode not found or not yours' });
+      }
+    }
+
+    const ytResp = await fetch(
+      `https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet&id=${encodeURIComponent(videoId)}&key=${encodeURIComponent(env.YOUTUBE_DATA_API_KEY)}`,
+    );
+    if (!ytResp.ok) {
+      const text = await ytResp.text();
+      return reply.status(502).send({
+        error: 'Failed to fetch YouTube stats',
+        upstreamStatus: ytResp.status,
+        upstreamBody: text.slice(0, 300),
+      });
+    }
+    const ytJson = (await ytResp.json()) as {
+      items?: Array<{
+        snippet?: { title?: string; channelTitle?: string };
+        statistics?: { viewCount?: string; likeCount?: string; commentCount?: string };
+      }>;
+    };
+    const item = ytJson.items?.[0];
+    if (!item) {
+      return reply.status(404).send({ error: 'YouTube video not found' });
+    }
+    const views = Number.parseInt(item.statistics?.viewCount ?? '0', 10);
+    if (!Number.isFinite(views) || views < 0) {
+      return reply.status(502).send({ error: 'YouTube returned invalid view count' });
+    }
+
+    try {
+      const [row] = await db
+        .insert(podsignalHostMetricSnapshots)
+        .values({
+          userId,
+          episodeId,
+          metricKey: 'other',
+          customLabel: 'YouTube video views (API)',
+          value: views,
+          sourceNote: `YouTube Data API · videoId=${videoId} · channel=${item.snippet?.channelTitle ?? 'unknown'} · likes=${item.statistics?.likeCount ?? '0'} · comments=${item.statistics?.commentCount ?? '0'}`,
+        })
+        .returning({
+          id: podsignalHostMetricSnapshots.id,
+          createdAt: podsignalHostMetricSnapshots.createdAt,
+        });
+
+      return reply.send({
+        snapshotId: row?.id ?? null,
+        createdAt: row?.createdAt.toISOString() ?? new Date().toISOString(),
+        source: 'youtube_data_api',
+        evidence: 'proxy' as const,
+        videoId,
+        title: item.snippet?.title ?? null,
+        channelTitle: item.snippet?.channelTitle ?? null,
+        views,
+      });
+    } catch (e: unknown) {
+      if (isMissingSchemaError(e)) {
+        return hostMetricsUnavailable(reply);
+      }
+      throw e;
+    }
+  });
+
   // GET /api/analytics/trends?days=30
   fastify.get<{
     Querystring: { days?: string };

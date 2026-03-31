@@ -42,6 +42,47 @@ function makeLinkToken(): string {
   return randomBytes(12).toString('base64url');
 }
 
+function buildSponsorBriefMarkdown(summary: Awaited<ReturnType<typeof buildPodsignalReportSummary>>): string {
+  const lines: string[] = [
+    '# PodSignal Sponsor Brief',
+    '',
+    `Generated (UTC): ${summary.generatedAt}`,
+    `Window: last ${summary.windowDays} days`,
+    '',
+    '## Executive Summary',
+    `**${summary.narrative.headline}.** ${summary.narrative.body}`,
+    '',
+    '## What Likely Worked (Qualitative, Not Causal)',
+    summary.likelyWorkedNarrative,
+    '',
+    '## Before / After Launch (PodSignal-Observed)',
+    summary.beforeAfterNarrative,
+    '',
+    '## Workspace Snapshot',
+    `- Shows: ${summary.workspace.shows}`,
+    `- Active campaigns: ${summary.workspace.activeCampaigns}`,
+    `- Launch checklist done/total: ${summary.workspace.launchTasksDone}/${summary.workspace.launchTasksTotal} (proxy)`,
+    `- Launch packs approved: ${summary.launchPackApprovalsObserved}`,
+    '',
+    '## Observed Usage',
+    `- Output usage events: ${summary.outputUsageEventTotal}`,
+    `- Trackable link clicks: ${summary.trackableLinkClicksObserved}`,
+    '',
+    '## Clicks By Episode',
+    ...(summary.clicksByEpisode.length === 0
+      ? ['- None yet']
+      : summary.clicksByEpisode.map((r) => `- ${r.episodeTitle}: ${r.clicks} clicks (${r.evidence})`)),
+    '',
+    '## Evidence Layers',
+    '- **Observed:** recorded directly in PodSignal',
+    '- **Proxy:** directional operational signals',
+    '- **Estimated:** model/output not used unless explicitly shown',
+    '- **Unsupported:** not claimable from this dataset',
+    '',
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
 export async function podsignalRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /api/podsignal/title-preset-analytics?windowDays=30 — defaults/overrides by surface
   fastify.get<{
@@ -316,6 +357,32 @@ export async function podsignalRoutes(fastify: FastifyInstance): Promise<void> {
         .header('Content-Type', 'application/pdf')
         .header('Content-Disposition', 'attachment; filename="podsignal-sponsor-proof.pdf"')
         .send(Buffer.from(pdfBytes));
+    } catch (e: unknown) {
+      if (handlePodsignalPilotDbError(e, reply)) return;
+      throw e;
+    }
+  });
+
+  // GET /api/podsignal/sponsor-brief.md — canonical sponsor brief artifact (markdown)
+  fastify.get('/sponsor-brief.md', async (request, reply) => {
+    if (!(await ensurePodsignalPilotSchema(reply))) return;
+    const user = request.user;
+    if (!user) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+    try {
+      const summary = await buildPodsignalReportSummary(user.userId);
+      const markdown = buildSponsorBriefMarkdown(summary);
+      await db.insert(podsignalOutputUsage).values({
+        userId: user.userId,
+        episodeId: null,
+        eventType: 'sponsor_one_pager_exported' as OutputUsageEventType,
+        payload: { format: 'md', windowDays: summary.windowDays },
+      });
+      return reply
+        .header('Content-Type', 'text/markdown; charset=utf-8')
+        .header('Content-Disposition', 'attachment; filename="podsignal-sponsor-brief.md"')
+        .send(markdown);
     } catch (e: unknown) {
       if (handlePodsignalPilotDbError(e, reply)) return;
       throw e;
