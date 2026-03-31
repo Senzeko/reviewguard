@@ -4,7 +4,7 @@
 
 import { randomBytes } from 'crypto';
 import type { FastifyInstance } from 'fastify';
-import { and, count, desc, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { db } from '../../db/index.js';
 import {
@@ -43,6 +43,105 @@ function makeLinkToken(): string {
 }
 
 export async function podsignalRoutes(fastify: FastifyInstance): Promise<void> {
+  // GET /api/podsignal/title-preset-analytics?windowDays=30 — defaults/overrides by surface
+  fastify.get<{
+    Querystring: { windowDays?: string };
+  }>('/title-preset-analytics', async (request, reply) => {
+    if (!(await ensurePodsignalPilotSchema(reply))) return;
+    const user = request.user;
+    if (!user) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+
+    const parsedWindow = parseInt(request.query.windowDays ?? '30', 10);
+    const windowDays = Number.isFinite(parsedWindow) ? Math.min(90, Math.max(7, parsedWindow)) : 30;
+    const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+
+    const events = await db
+      .select({
+        eventType: podsignalOutputUsage.eventType,
+        payload: podsignalOutputUsage.payload,
+      })
+      .from(podsignalOutputUsage)
+      .where(
+        and(
+          eq(podsignalOutputUsage.userId, user.userId),
+          gte(podsignalOutputUsage.createdAt, since),
+          inArray(podsignalOutputUsage.eventType, ['title_preset_default_applied', 'title_preset_overridden']),
+        ),
+      );
+
+    const surfaces = {
+      episodeDetail: { defaultsApplied: 0, overrides: 0, overrideRate: 0 },
+      episodeLaunch: { defaultsApplied: 0, overrides: 0, overrideRate: 0 },
+    };
+    let totalDefaults = 0;
+    let totalOverrides = 0;
+    const transitionCounts = new Map<string, number>();
+
+    for (const e of events) {
+      const payload = (e.payload ?? {}) as { surface?: unknown };
+      const surface =
+        payload.surface === 'episode_detail'
+          ? 'episodeDetail'
+          : payload.surface === 'episode_launch'
+            ? 'episodeLaunch'
+            : null;
+
+      if (e.eventType === 'title_preset_default_applied') {
+        totalDefaults += 1;
+        if (surface) surfaces[surface].defaultsApplied += 1;
+      }
+      if (e.eventType === 'title_preset_overridden') {
+        totalOverrides += 1;
+        if (surface) surfaces[surface].overrides += 1;
+        const p = (e.payload ?? {}) as { kind?: unknown; from?: unknown; to?: unknown; surface?: unknown };
+        const kind = typeof p.kind === 'string' ? p.kind : 'unknown';
+        const from = typeof p.from === 'string' ? p.from : 'unknown';
+        const to = typeof p.to === 'string' ? p.to : 'unknown';
+        const s = typeof p.surface === 'string' ? p.surface : 'unknown';
+        const key = `${kind}|${from}|${to}|${s}`;
+        transitionCounts.set(key, (transitionCounts.get(key) ?? 0) + 1);
+      }
+    }
+
+    const withRates = {
+      episodeDetail: {
+        ...surfaces.episodeDetail,
+        overrideRate:
+          surfaces.episodeDetail.defaultsApplied > 0
+            ? Number((surfaces.episodeDetail.overrides / surfaces.episodeDetail.defaultsApplied).toFixed(4))
+            : 0,
+      },
+      episodeLaunch: {
+        ...surfaces.episodeLaunch,
+        overrideRate:
+          surfaces.episodeLaunch.defaultsApplied > 0
+            ? Number((surfaces.episodeLaunch.overrides / surfaces.episodeLaunch.defaultsApplied).toFixed(4))
+            : 0,
+      },
+    };
+
+    const topOverrideTransitions = [...transitionCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([key, count]) => {
+        const [kind, from, to, surface] = key.split('|');
+        return { kind, from, to, surface, count };
+      });
+
+    return reply.send({
+      windowDays,
+      totals: {
+        defaultsApplied: totalDefaults,
+        overrides: totalOverrides,
+        overrideRate: totalDefaults > 0 ? Number((totalOverrides / totalDefaults).toFixed(4)) : 0,
+      },
+      surfaces: withRates,
+      topOverrideTransitions,
+    });
+  });
+
   // GET /api/podsignal/trackable-links?episodeId= — list links for an episode (observed tokens)
   fastify.get<{
     Querystring: { episodeId?: string };

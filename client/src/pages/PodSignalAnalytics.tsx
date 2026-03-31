@@ -6,12 +6,14 @@ import {
   deleteHostMetricSnapshot,
   fetchEpisodeOptionsForForms,
   fetchHostMetricSnapshots,
+  fetchTitlePresetAnalytics,
   fetchPodsignalReportSummary,
   fetchPodsignalSummary,
   type HostMetricKey,
   type HostMetricSnapshotRow,
   type PodsignalReportSummary,
   type PodsignalSummary,
+  type TitlePresetAnalyticsResponse,
 } from '../api/client';
 import { MeasurementHonestyBanner } from '../components/MeasurementHonestyBanner';
 import { trackOutputUsage } from '../lib/trackOutputUsage';
@@ -102,6 +104,7 @@ export function PodSignalAnalytics() {
   const [episodeId, setEpisodeId] = useState('');
   const [hostFormError, setHostFormError] = useState('');
   const [hostSaving, setHostSaving] = useState(false);
+  const [presetAnalytics, setPresetAnalytics] = useState<TitlePresetAnalyticsResponse | null>(null);
 
   useEffect(() => {
     void trackOutputUsage({
@@ -138,6 +141,12 @@ export function PodSignalAnalytics() {
         } else {
           setReportError('Could not load measurement window (launch proof API). Workspace counts may still apply.');
         }
+      }
+      try {
+        const p = await fetchTitlePresetAnalytics();
+        if (!cancelled) setPresetAnalytics(p);
+      } catch {
+        if (!cancelled) setPresetAnalytics(null);
       }
       try {
         const { snapshots } = await fetchHostMetricSnapshots();
@@ -367,6 +376,87 @@ export function PodSignalAnalytics() {
           </div>
           <span className="analytics-kpi-meta">Workspace totals</span>
         </div>
+      </div>
+
+      <div className="analytics-card" style={{ marginBottom: 20 }}>
+        <h2 className="analytics-card-title">Title preset adoption</h2>
+        <p style={{ margin: '0 0 12px', fontSize: 13, color: 'var(--ps-muted)' }}>
+          Default strategy usage vs manual overrides (tone/niche), last {presetAnalytics?.windowDays ?? windowDays} days.
+        </p>
+        {presetAnalytics ? (
+          <>
+            <div className="analytics-kpi-grid" style={{ marginTop: 0 }}>
+              <div className="analytics-kpi">
+                <div className="analytics-kpi-label">Defaults applied</div>
+                <div className="analytics-kpi-value">{presetAnalytics.totals.defaultsApplied}</div>
+                <span className="analytics-kpi-meta">All title surfaces</span>
+              </div>
+              <div className="analytics-kpi">
+                <div className="analytics-kpi-label">Overrides</div>
+                <div className="analytics-kpi-value">{presetAnalytics.totals.overrides}</div>
+                <span className="analytics-kpi-meta">Tone/niche manual changes</span>
+              </div>
+              <div className="analytics-kpi">
+                <div className="analytics-kpi-label">Override rate</div>
+                <div className="analytics-kpi-value">{Math.round(presetAnalytics.totals.overrideRate * 100)}%</div>
+                <span className="analytics-kpi-meta">Lower = defaults fit better</span>
+              </div>
+              <div className="analytics-kpi">
+                <div className="analytics-kpi-label">Episode detail</div>
+                <div className="analytics-kpi-value" style={{ fontSize: 18 }}>
+                  {presetAnalytics.surfaces.episodeDetail.defaultsApplied}/
+                  {presetAnalytics.surfaces.episodeDetail.overrides}
+                </div>
+                <span className="analytics-kpi-meta">defaults / overrides</span>
+              </div>
+              <div className="analytics-kpi">
+                <div className="analytics-kpi-label">Episode launch</div>
+                <div className="analytics-kpi-value" style={{ fontSize: 18 }}>
+                  {presetAnalytics.surfaces.episodeLaunch.defaultsApplied}/
+                  {presetAnalytics.surfaces.episodeLaunch.overrides}
+                </div>
+                <span className="analytics-kpi-meta">defaults / overrides</span>
+              </div>
+            </div>
+            <div style={{ marginTop: 14 }}>
+              <h3 style={{ fontSize: 14, margin: '0 0 8px', color: '#111827' }}>Top override transitions</h3>
+              {presetAnalytics.topOverrideTransitions.length === 0 ? (
+                <p style={{ margin: 0, color: 'var(--ps-muted)', fontSize: 13 }}>
+                  No overrides logged in this window.
+                </p>
+              ) : (
+                <div className="analytics-table-wrap">
+                  <table className="analytics-table">
+                    <thead>
+                      <tr>
+                        <th>Kind</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Surface</th>
+                        <th>Count</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {presetAnalytics.topOverrideTransitions.map((t, idx) => (
+                        <tr key={`${t.kind}-${t.from}-${t.to}-${t.surface}-${idx}`}>
+                          <td style={{ textTransform: 'capitalize' }}>{t.kind}</td>
+                          <td>{t.from}</td>
+                          <td>{t.to}</td>
+                          <td>{t.surface.replace('_', ' ')}</td>
+                          <td>{t.count}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <p style={{ margin: 0, color: 'var(--ps-muted)', fontSize: 14 }}>
+            Preset adoption data unavailable.
+          </p>
+        )}
       </div>
 
       <div className="analytics-row-2">

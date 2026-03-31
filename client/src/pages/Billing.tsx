@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { getUserFacingApiError } from '../api/userFacingError';
@@ -118,7 +119,9 @@ export function Billing() {
   async function handleCheckout(planId: string) {
     if (!billing?.stripeConfigured || checkoutLockRef.current) return;
     checkoutLockRef.current = true;
-    setLoading(planId);
+    flushSync(() => {
+      setLoading(planId);
+    });
     let redirecting = false;
     try {
       const idempotencyKey = crypto.randomUUID();

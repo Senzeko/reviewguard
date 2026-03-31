@@ -8,6 +8,9 @@ import {
   fetchWebhookConfig,
   fetchNotificationPreferences,
   updateNotificationPreferences,
+  fetchPodsignalPreferences,
+  fetchTitlePresetAnalytics,
+  updatePodsignalPreferences,
   fetchAccountInfo,
   changePassword,
   fetchTeamMembers,
@@ -18,9 +21,11 @@ import {
   type NotificationPreferences,
   type AccountInfo,
   type TeamMember,
+  type PodsignalPreferences,
 } from '../api/client';
 
 type Tab = 'pos' | 'webhook' | 'notifications' | 'team' | 'account';
+const SHOW_LEGACY_SETTINGS = import.meta.env.VITE_SHOW_LEGACY_SETTINGS === 'true';
 
 export function Settings() {
   const { user, logout } = useAuth();
@@ -32,10 +37,24 @@ export function Settings() {
   const posConnected = searchParams.get('pos_connected');
   const posError = searchParams.get('pos_error');
 
+  useEffect(() => {
+    if (!SHOW_LEGACY_SETTINGS && tab === 'webhook') {
+      setTab('pos');
+    }
+  }, [tab]);
+
+  const tabs: [Tab, string][] = [
+    ['pos', 'Data Sources'],
+    ...(SHOW_LEGACY_SETTINGS ? ([['webhook', 'Legacy Integrations']] as [Tab, string][]) : []),
+    ['notifications', 'Notifications'],
+    ['team', 'Team'],
+    ['account', 'Account'],
+  ];
+
   return (
     <div className="ps-settings-shell">
       <div className="ps-settings-breadcrumb">
-        Settings / <strong>Workspace</strong>
+        PodSignal / <strong>Settings</strong>
       </div>
       <header className="ps-settings-header">
         <div>
@@ -54,23 +73,17 @@ export function Settings() {
 
       {posConnected && (
         <div style={{ background: '#e8f5e9', border: '1px solid #a5d6a7', borderRadius: 8, padding: 16, marginBottom: 16, fontSize: 14 }}>
-          <strong>POS connected!</strong> Your {posConnected} account has been linked. An initial transaction sync has been queued.
+          <strong>Data source connected.</strong> Your {posConnected} account has been linked and an initial sync was queued.
         </div>
       )}
       {posError && (
         <div style={{ background: '#ffebee', border: '1px solid #ef9a9a', borderRadius: 8, padding: 16, marginBottom: 16, fontSize: 14 }}>
-          <strong>POS connection failed:</strong> {posError}
+          <strong>Connection failed:</strong> {posError}
         </div>
       )}
 
       <div className="ps-settings-tabs">
-        {([
-          ['pos', 'POS Connection'],
-          ['webhook', 'Webhook'],
-          ['notifications', 'Notifications'],
-          ['team', 'Team'],
-          ['account', 'Account'],
-        ] as [Tab, string][]).map(([t, label]) => (
+        {tabs.map(([t, label]) => (
           <button
             key={t}
             type="button"
@@ -84,7 +97,7 @@ export function Settings() {
 
       <div className="ps-settings-panel">
         {tab === 'pos' && <PosTab />}
-        {tab === 'webhook' && <WebhookTab />}
+        {SHOW_LEGACY_SETTINGS && tab === 'webhook' && <WebhookTab />}
         {tab === 'notifications' && <NotificationsTab />}
         {tab === 'team' && <TeamTab />}
         {tab === 'account' && <AccountTab />}
@@ -113,11 +126,11 @@ function PosTab() {
     } finally { setSyncing(false); }
   };
 
-  if (!pos) return <p style={{ color: '#888' }}>Loading POS status...</p>;
+  if (!pos) return <p style={{ color: '#888' }}>Loading data source status...</p>;
 
   return (
     <div>
-      <h3 style={styles.sectionTitle}>POS System Connection</h3>
+      <h3 style={styles.sectionTitle}>Commerce data source</h3>
       <div style={styles.card}>
         <Row label="Provider"><span style={styles.badge}>{pos.posProvider}</span></Row>
         <Row label="Status">
@@ -125,25 +138,25 @@ function PosTab() {
             {pos.isActive ? 'Connected' : 'Disconnected'}
           </span>
         </Row>
-        <Row label="API Key">{pos.hasApiKey ? 'Configured (encrypted)' : 'Not set'}</Row>
+        <Row label="Credentials">{pos.hasApiKey ? 'Configured (encrypted)' : 'Not set'}</Row>
         {pos.cloverMerchantId && <Row label="Clover Merchant ID"><code style={styles.code}>{pos.cloverMerchantId}</code></Row>}
         <Row label="Last Sync">{pos.lastSyncAt ? new Date(pos.lastSyncAt).toLocaleString() : 'Never synced'}</Row>
       </div>
       <div style={{ marginTop: 20, display: 'flex', gap: 12, alignItems: 'center' }}>
         <button onClick={handleSync} disabled={syncing || !pos.isActive}
           style={{ ...styles.primaryBtn, opacity: syncing || !pos.isActive ? 0.5 : 1 }}>
-          {syncing ? 'Syncing...' : 'Sync Now'}
+          {syncing ? 'Syncing...' : 'Pull latest transactions'}
         </button>
-        {!pos.isActive && <span style={{ fontSize: 13, color: '#E24B4A' }}>POS connection is inactive. Please reconnect your POS system.</span>}
+        {!pos.isActive && <span style={{ fontSize: 13, color: '#E24B4A' }}>This source is disconnected. Reconnect to keep launch evidence data fresh.</span>}
       </div>
       {syncMsg && <p style={{ marginTop: 12, fontSize: 14, color: syncMsg.includes('queued') ? '#1D9E75' : '#E24B4A' }}>{syncMsg}</p>}
       <div style={{ marginTop: 32 }}>
-        <h4 style={styles.subTitle}>About POS Sync</h4>
+        <h4 style={styles.subTitle}>How this supports PodSignal</h4>
         <ul style={styles.helpList}>
-          <li>Transactions sync automatically every <strong>6 hours</strong></li>
-          <li>Each sync imports the last <strong>14 days</strong> of completed orders</li>
-          <li>Customer names are stored temporarily (14 days) for matching, then purged</li>
-          <li>POS API credentials are encrypted with AES-256-GCM</li>
+          <li>Transactions sync automatically every <strong>6 hours</strong>.</li>
+          <li>Each sync imports the last <strong>14 days</strong> of completed orders.</li>
+          <li>This data helps with attribution and sponsor-proof context inside PodSignal.</li>
+          <li>Credentials are encrypted with AES-256-GCM.</li>
         </ul>
       </div>
     </div>
@@ -163,14 +176,13 @@ function WebhookTab() {
     navigator.clipboard.writeText(text).then(() => { setCopied(label); setTimeout(() => setCopied(''), 2000); });
   };
 
-  if (!webhook) return <p style={{ color: '#888' }}>Loading webhook config...</p>;
+  if (!webhook) return <p style={{ color: '#888' }}>Loading integration config...</p>;
 
   return (
     <div>
-      <h3 style={styles.sectionTitle}>Google Business reviews (legacy)</h3>
+      <h3 style={styles.sectionTitle}>Legacy ReviewGuard integration</h3>
       <p style={{ fontSize: 14, color: '#666', marginBottom: 16 }}>
-        Optional integration for the ReviewGuard-era workflow — not part of the PodSignal podcast launch MVP. Safe to ignore
-        for podcast-only pilots.
+        This webhook is from the earlier ReviewGuard workflow. It is optional and not required for PodSignal podcast launch operations.
       </p>
       <div style={styles.card}>
         <Row label="Webhook URL">
@@ -188,7 +200,7 @@ function WebhookTab() {
         </Row>
       </div>
       <div style={{ marginTop: 24 }}>
-        <h4 style={styles.subTitle}>Setup Instructions</h4>
+        <h4 style={styles.subTitle}>If you still use this legacy flow</h4>
         <ol style={styles.helpList}>
           <li>Go to your Google Business Profile settings</li>
           <li>Navigate to <strong>Notifications &rarr; Webhooks</strong></li>
@@ -206,8 +218,33 @@ function WebhookTab() {
 function NotificationsTab() {
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
   const [saving, setSaving] = useState(false);
+  const [podsignalPrefs, setPodsignalPrefs] = useState<PodsignalPreferences | null>(null);
+  const [savingPodsignal, setSavingPodsignal] = useState(false);
+  const [recommendedTone, setRecommendedTone] = useState<PodsignalPreferences['titleTonePreset'] | null>(null);
+  const [recommendedNiche, setRecommendedNiche] = useState<PodsignalPreferences['titleNichePreset'] | null>(null);
+  const [recommendationEvidence, setRecommendationEvidence] = useState<{ overrides: number; windowDays: number } | null>(null);
 
-  useEffect(() => { fetchNotificationPreferences().then(setPrefs).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchNotificationPreferences().then(setPrefs).catch(() => {});
+    fetchPodsignalPreferences().then(setPodsignalPrefs).catch(() => {});
+    fetchTitlePresetAnalytics()
+      .then((r) => {
+        const topTone = r.topOverrideTransitions
+          .filter((t) => t.kind === 'tone' && t.count >= 2)
+          .sort((a, b) => b.count - a.count)[0];
+        const topNiche = r.topOverrideTransitions
+          .filter((t) => t.kind === 'niche' && t.count >= 2)
+          .sort((a, b) => b.count - a.count)[0];
+        setRecommendedTone((topTone?.to as PodsignalPreferences['titleTonePreset'] | undefined) ?? null);
+        setRecommendedNiche((topNiche?.to as PodsignalPreferences['titleNichePreset'] | undefined) ?? null);
+        setRecommendationEvidence({ overrides: r.totals.overrides, windowDays: r.windowDays });
+      })
+      .catch(() => {
+        setRecommendedTone(null);
+        setRecommendedNiche(null);
+        setRecommendationEvidence(null);
+      });
+  }, []);
 
   const toggle = async (key: keyof NotificationPreferences['preferences']) => {
     if (!prefs) return;
@@ -223,16 +260,16 @@ function NotificationsTab() {
   if (!prefs) return <p style={{ color: '#888' }}>Loading notification preferences...</p>;
 
   const notifItems = [
-    { key: 'onNewReview' as const, label: 'New review received', desc: 'Get notified when a new Google review is detected' },
-    { key: 'onScoringComplete' as const, label: 'Scoring complete', desc: 'Get notified when forensic analysis finishes' },
-    { key: 'onPdfReady' as const, label: 'PDF ready', desc: 'Get notified when a dispute evidence packet is generated' },
-    { key: 'onPosSync' as const, label: 'POS sync complete', desc: 'Get notified when new transactions are imported' },
-    { key: 'dailyDigest' as const, label: 'Daily digest', desc: 'Receive a daily summary of review activity at 8 AM' },
+    { key: 'onNewReview' as const, label: 'New feedback signal', desc: 'Notify when a new external feedback signal is detected (legacy-compatible).' },
+    { key: 'onScoringComplete' as const, label: 'Episode processing complete', desc: 'Notify when transcript and analysis jobs finish.' },
+    { key: 'onPdfReady' as const, label: 'Launch proof export ready', desc: 'Notify when a sponsor-proof PDF is generated.' },
+    { key: 'onPosSync' as const, label: 'Data source sync complete', desc: 'Notify when transactions and source data imports finish.' },
+    { key: 'dailyDigest' as const, label: 'Daily workspace digest', desc: 'Receive a daily summary of launch activity and key events.' },
   ];
 
   return (
     <div>
-      <h3 style={styles.sectionTitle}>Email Notifications</h3>
+      <h3 style={styles.sectionTitle}>Workspace notifications</h3>
       {!prefs.emailConfigured && (
         <div style={{ background: '#FFF8E1', border: '1px solid #FFE082', borderRadius: 8, padding: 16, marginBottom: 20, fontSize: 14 }}>
           <strong>SMTP not configured.</strong> Email notifications are logged to the server console in development mode. Set <code>SMTP_HOST</code>, <code>SMTP_USER</code>, and <code>SMTP_PASS</code> to enable email delivery.
@@ -261,6 +298,123 @@ function NotificationsTab() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div style={{ ...styles.card, marginTop: 16 }}>
+        <h4 style={styles.subTitle}>PodSignal content defaults</h4>
+        <p style={{ fontSize: 13, color: '#666', margin: '0 0 10px' }}>
+          Set default title strategy for episode packaging and launch pages.
+        </p>
+        {podsignalPrefs ? (
+          <div style={{ display: 'grid', gap: 10, maxWidth: 520 }}>
+            <label style={{ fontSize: 13, color: '#4b5563', fontWeight: 600 }}>
+              Default tone
+              <select
+                value={podsignalPrefs.titleTonePreset}
+                onChange={(e) =>
+                  setPodsignalPrefs((prev) =>
+                    prev ? { ...prev, titleTonePreset: e.target.value as PodsignalPreferences['titleTonePreset'] } : prev,
+                  )
+                }
+                style={{ ...styles.input, marginTop: 6 }}
+              >
+                <option value="balanced">Balanced</option>
+                <option value="authority">Authority</option>
+                <option value="curiosity">Curiosity</option>
+                <option value="contrarian">Contrarian</option>
+                <option value="practical">Practical</option>
+              </select>
+            </label>
+            <label style={{ fontSize: 13, color: '#4b5563', fontWeight: 600 }}>
+              Default niche
+              <select
+                value={podsignalPrefs.titleNichePreset}
+                onChange={(e) =>
+                  setPodsignalPrefs((prev) =>
+                    prev
+                      ? { ...prev, titleNichePreset: e.target.value as PodsignalPreferences['titleNichePreset'] }
+                      : prev,
+                  )
+                }
+                style={{ ...styles.input, marginTop: 6 }}
+              >
+                <option value="general">General</option>
+                <option value="b2b">B2B</option>
+                <option value="creator-economy">Creator economy</option>
+                <option value="wellness">Wellness</option>
+                <option value="finance">Finance</option>
+                <option value="tech">Tech</option>
+                <option value="media">Media</option>
+              </select>
+            </label>
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!podsignalPrefs) return;
+                  setSavingPodsignal(true);
+                  void updatePodsignalPreferences(podsignalPrefs)
+                    .then((res) => setPodsignalPrefs(res.preferences))
+                    .catch(() => {})
+                    .finally(() => setSavingPodsignal(false));
+                }}
+                style={{ ...styles.primaryBtn, opacity: savingPodsignal ? 0.7 : 1 }}
+                disabled={savingPodsignal}
+              >
+                {savingPodsignal ? 'Saving…' : 'Save content defaults'}
+              </button>
+            </div>
+            {((recommendedTone && recommendedTone !== podsignalPrefs.titleTonePreset) ||
+              (recommendedNiche && recommendedNiche !== podsignalPrefs.titleNichePreset)) ? (
+              <div
+                style={{
+                  border: '1px solid #bfdbfe',
+                  background: '#eff6ff',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  fontSize: 13,
+                  color: '#1e3a8a',
+                }}
+              >
+                <div style={{ marginBottom: 8 }}>
+                  Recommended defaults from real override behavior:
+                  {' '}
+                  <strong>
+                    tone = {recommendedTone ?? podsignalPrefs.titleTonePreset}
+                    , niche = {recommendedNiche ?? podsignalPrefs.titleNichePreset}
+                  </strong>
+                </div>
+                {recommendationEvidence ? (
+                  <div style={{ marginBottom: 8, color: '#1d4ed8', fontSize: 12 }}>
+                    Confidence: based on {recommendationEvidence.overrides} override
+                    {recommendationEvidence.overrides === 1 ? '' : 's'} in the last {recommendationEvidence.windowDays} days.
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = {
+                      titleTonePreset: recommendedTone ?? podsignalPrefs.titleTonePreset,
+                      titleNichePreset: recommendedNiche ?? podsignalPrefs.titleNichePreset,
+                    };
+                    setPodsignalPrefs(next);
+                    setSavingPodsignal(true);
+                    void updatePodsignalPreferences(next)
+                      .then((res) => setPodsignalPrefs(res.preferences))
+                      .catch(() => {})
+                      .finally(() => setSavingPodsignal(false));
+                  }}
+                  style={{ ...styles.primaryBtn, padding: '8px 12px', fontSize: 12 }}
+                  disabled={savingPodsignal}
+                >
+                  Apply recommended defaults
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p style={{ color: '#888', margin: 0 }}>Loading PodSignal defaults...</p>
+        )}
       </div>
     </div>
   );
@@ -312,7 +466,7 @@ function TeamTab() {
 
   return (
     <div>
-      <h3 style={styles.sectionTitle}>Team Members</h3>
+      <h3 style={styles.sectionTitle}>Workspace team</h3>
 
       {loading ? <p style={{ color: '#888' }}>Loading...</p> : (
         <div style={styles.card}>
@@ -335,10 +489,10 @@ function TeamTab() {
       {isOwner && (
         <div style={{ marginTop: 24 }}>
           {!showInvite ? (
-            <button onClick={() => setShowInvite(true)} style={styles.primaryBtn}>Invite Team Member</button>
+            <button onClick={() => setShowInvite(true)} style={styles.primaryBtn}>Invite teammate</button>
           ) : (
             <div style={{ ...styles.card, marginTop: 12 }}>
-              <h4 style={styles.subTitle}>Invite New Member</h4>
+              <h4 style={styles.subTitle}>Invite teammate</h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxWidth: 400 }}>
                 <input value={inviteName} onChange={(e) => setInviteName(e.target.value)} placeholder="Full name"
                   style={styles.input} />
@@ -398,7 +552,7 @@ function AccountTab() {
 
   return (
     <div>
-      <h3 style={styles.sectionTitle}>Account Information</h3>
+      <h3 style={styles.sectionTitle}>Profile & security</h3>
       <div style={styles.card}>
         <Row label="Full Name">{account.fullName}</Row>
         <Row label="Email">{account.email}</Row>

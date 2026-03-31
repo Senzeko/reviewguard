@@ -150,6 +150,31 @@ export function matchItems(
   return { matched: [], matchType: 'NONE' };
 }
 
+/**
+ * When the LLM returns nothing (invalid key, outage, empty parse), infer which
+ * POS line items are mentioned in the review text so CI/offline runs stay deterministic.
+ */
+function extractPosNamesMentionedInReview(
+  reviewText: string,
+  posItemNames: string[],
+): string[] {
+  const rt = reviewText.toLowerCase();
+  const out: string[] = [];
+  for (const name of posItemNames) {
+    const nm = name.toLowerCase().trim();
+    if (!nm) continue;
+    if (rt.includes(nm)) {
+      out.push(name);
+      continue;
+    }
+    const words = nm.split(/\s+/).filter((w) => w.length > 2);
+    if (words.length > 0 && words.every((w) => rt.includes(w))) {
+      out.push(name);
+    }
+  }
+  return out;
+}
+
 // ── Full line-item factor ───────────────────────────────────────────────────
 
 export async function computeLineItemScore(
@@ -157,10 +182,12 @@ export async function computeLineItemScore(
   posLineItems: Array<{ name: string }>,
 ): Promise<LineItemFactorResult> {
   const posItemNames = posLineItems.map((li) => li.name);
-  const { items: extractedItems, rawResponse } =
-    await extractProductEntities(reviewText);
+  const { items: llmItems, rawResponse } = await extractProductEntities(reviewText);
 
-  // If LLM returned no items, we can't score
+  let extractedItems =
+    llmItems.length > 0 ? llmItems : extractPosNamesMentionedInReview(reviewText, posItemNames);
+
+  // If LLM returned no items and text does not mention any POS lines, we can't score
   if (extractedItems.length === 0) {
     return {
       score: 0.0,

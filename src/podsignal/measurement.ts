@@ -87,6 +87,10 @@ export const OUTPUT_USAGE_EVENT_TYPES = [
   'analytics_page_viewed',
   /** User saved a self-reported host-platform metric row on Analytics. */
   'host_metric_snapshot_logged',
+  /** Workspace default title strategy loaded on title-generation surfaces. */
+  'title_preset_default_applied',
+  /** User changed tone/niche away from loaded defaults. */
+  'title_preset_overridden',
 ] as const;
 
 export type OutputUsageEventType = (typeof OUTPUT_USAGE_EVENT_TYPES)[number];

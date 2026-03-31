@@ -21,6 +21,9 @@ interface AssemblyTranscript {
 const MAX_POLL_MS = 25 * 60_000;
 const POLL_INTERVAL_MS = 1500;
 
+/** Required by AssemblyAI v2 transcript API (non-empty list). See API error: speech_models. */
+const DEFAULT_SPEECH_MODELS = ['universal-2'] as const;
+
 export async function transcribeWithAssemblyAI(
   apiKey: string,
   buffer: Buffer,
@@ -50,6 +53,7 @@ export async function transcribeWithAssemblyAI(
     },
     body: JSON.stringify({
       audio_url: upload_url,
+      speech_models: [...DEFAULT_SPEECH_MODELS],
     }),
   });
 

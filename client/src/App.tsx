@@ -21,6 +21,7 @@ import { Onboarding } from './pages/Onboarding';
 import { PodSignalAnalytics } from './pages/PodSignalAnalytics';
 import { SponsorReportsPlaceholder } from './pages/SponsorReportsPlaceholder';
 import { Settings } from './pages/Settings';
+import { ReviewerConsole } from './pages/ReviewerConsole';
 
 function App() {
   return (
@@ -32,6 +33,7 @@ function App() {
           <Route path="/signup" element={<Signup />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/console/:investigationId" element={<ReviewerConsole />} />
           <Route element={<ProtectedRoute />}>
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/dashboard" element={<PodSignalLayout />}>

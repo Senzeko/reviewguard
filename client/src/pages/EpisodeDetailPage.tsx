@@ -3,28 +3,134 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   fetchBillingQuotaStatus,
   fetchEpisode,
+  fetchPodsignalPreferences,
+  fetchEpisodeTitleSuggestions,
   patchEpisode,
   patchEpisodeClip,
   deleteEpisode,
   processEpisode,
   uploadEpisodeAudio,
   type EpisodeConflictPayload,
+  type EpisodeTitleNichePreset,
+  type EpisodeTitleTonePreset,
 } from '../api/client';
 import type { EpisodeDetail } from '../types/podsignal';
 import { trackOutputUsage } from '../lib/trackOutputUsage';
 import { useEpisodeLiveUpdates } from '../hooks/useEpisodeLiveUpdates';
 import { loadDraft, removeDraft, saveDraft } from '../lib/draftStorage';
 import { getUserFacingApiError } from '../api/userFacingError';
+import type { EpisodeClipRow, TranscriptSegmentRow } from '../types/podsignal';
 
 function isRequestCanceled(err: unknown): boolean {
   const e = err as { code?: string; name?: string };
   return e.code === 'ERR_CANCELED' || e.name === 'CanceledError';
 }
 
-function buildTitleVariants(title: string): string[] {
-  const t = title.trim();
-  if (!t) return ['Episode title', 'Episode — highlights', 'Interview episode'];
-  return [t, `${t} — key takeaways`, `Interview: ${t}`];
+const TITLE_STOP_WORDS = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'but', 'by', 'for', 'from', 'how', 'in', 'into', 'is', 'it',
+  'of', 'on', 'or', 'that', 'the', 'their', 'this', 'to', 'we', 'what', 'when', 'where', 'with', 'you',
+  'your', 'our', 'about', 'after', 'before', 'during', 'episode', 'podcast', 'interview',
+]);
+
+function normalizeTitleText(input: string): string {
+  return input.replace(/\s+/g, ' ').trim();
+}
+
+function toTitleCase(input: string): string {
+  return input
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((w) => w.slice(0, 1).toUpperCase() + w.slice(1).toLowerCase())
+    .join(' ');
+}
+
+function trimToLength(input: string, max = 70): string {
+  const s = normalizeTitleText(input);
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max - 1);
+  const noHalfWord = cut.replace(/\s+\S*$/, '').trim();
+  return `${(noHalfWord || cut).trim()}…`;
+}
+
+function extractTopTerms(text: string, limit: number): string[] {
+  const counts = new Map<string, number>();
+  const words = text.toLowerCase().match(/[a-z0-9']+/g) ?? [];
+  for (const w of words) {
+    const cleaned = w.replace(/^'+|'+$/g, '');
+    if (cleaned.length < 4) continue;
+    if (TITLE_STOP_WORDS.has(cleaned)) continue;
+    counts.set(cleaned, (counts.get(cleaned) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => (b[1] === a[1] ? a[0].localeCompare(b[0]) : b[1] - a[1]))
+    .slice(0, limit)
+    .map(([term]) => term);
+}
+
+function chooseTopicPhrase(terms: string[]): string | null {
+  if (!terms.length) return null;
+  if (terms.length === 1) return toTitleCase(terms[0]);
+  return toTitleCase(`${terms[0]} ${terms[1]}`);
+}
+
+function buildTitleVariants(input: {
+  title: string;
+  summary: string | null;
+  transcript: string | null;
+  clips: EpisodeClipRow[];
+  transcriptSegments: TranscriptSegmentRow[];
+}): string[] {
+  const baseTitle = normalizeTitleText(input.title);
+  if (!baseTitle) return ['Episode title', 'Episode highlights', 'Best moments from this episode'];
+
+  const clipTitles = input.clips.slice(0, 4).map((c) => c.title).join(' ');
+  const segmentText = input.transcriptSegments
+    .slice(0, 12)
+    .map((s) => s.text)
+    .join(' ');
+  const context = [input.summary ?? '', clipTitles, segmentText, input.transcript?.slice(0, 900) ?? '']
+    .join(' ')
+    .trim();
+  const topTerms = extractTopTerms(context, 6);
+  const topicPhrase = chooseTopicPhrase(topTerms);
+  const firstClip = normalizeTitleText(input.clips[0]?.title ?? '');
+
+  const rawCandidates = [
+    baseTitle,
+    topicPhrase ? `${baseTitle} | ${topicPhrase}` : `${baseTitle} | Key moments`,
+    topicPhrase ? `How ${topicPhrase} actually works (${baseTitle})` : `What this episode gets right: ${baseTitle}`,
+    firstClip ? `${firstClip} — from ${baseTitle}` : `${baseTitle} — Highlights and takeaways`,
+    topicPhrase ? `${topicPhrase}: ${baseTitle}` : `${baseTitle} — Deep dive`,
+    topTerms[2] ? `${toTitleCase(topTerms[2])} insights from ${baseTitle}` : `${baseTitle} — Practical insights`,
+  ]
+    .map((s) => trimToLength(s))
+    .filter(Boolean);
+
+  const seen = new Set<string>();
+  const uniqueCandidates = rawCandidates.filter((c) => {
+    const key = c.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const scored = uniqueCandidates
+    .map((candidate) => {
+      const normalized = candidate.toLowerCase();
+      const lenDelta = Math.abs(candidate.length - 58);
+      const lenScore = Math.max(0, 1 - lenDelta / 58);
+      const keywordHits = topTerms.reduce((acc, term) => (normalized.includes(term) ? acc + 1 : acc), 0);
+      const keywordScore = Math.min(0.45, keywordHits * 0.15);
+      const structureBonus = /[:|?]/.test(candidate) ? 0.08 : 0;
+      return { candidate, score: lenScore + keywordScore + structureBonus };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3)
+    .map((s) => s.candidate);
+
+  if (scored.length >= 3) return scored;
+  const fallback = [`${baseTitle} — Highlights`, `${baseTitle} — Deep dive`];
+  return [...scored, ...fallback].slice(0, 3);
 }
 
 function formatMs(ms: number): string {
@@ -66,8 +172,16 @@ export function EpisodeDetailPage() {
   const [draftRestoredBanner, setDraftRestoredBanner] = useState(false);
   const [titleVariantIdx, setTitleVariantIdx] = useState(0);
   const [billingQuota, setBillingQuota] = useState<{ reviewsUsed: number; reviewLimit: number } | null>(null);
+  const [serverTitleSuggestions, setServerTitleSuggestions] = useState<string[]>([]);
+  const [serverTitleSuggestionsUsedLlm, setServerTitleSuggestionsUsedLlm] = useState(false);
+  const [titleSuggestionsLoading, setTitleSuggestionsLoading] = useState(false);
+  const [serverTitleSuggestionsForTitle, setServerTitleSuggestionsForTitle] = useState('');
+  const [titleTonePreset, setTitleTonePreset] = useState<EpisodeTitleTonePreset>('balanced');
+  const [titleNichePreset, setTitleNichePreset] = useState<EpisodeTitleNichePreset>('general');
 
   const userEditedRef = useRef({ title: false, audioUrl: false });
+  const titlePrefsLoadedRef = useRef(false);
+  const titlePresetHydratingRef = useRef(false);
   const baselineUpdatedAtRef = useRef<string | null>(null);
   const saveLockRef = useRef(false);
   const processLockRef = useRef(false);
@@ -133,6 +247,67 @@ export function EpisodeDetailPage() {
   }, [episodeId]);
 
   useEffect(() => {
+    if (titlePrefsLoadedRef.current) return;
+    titlePrefsLoadedRef.current = true;
+    titlePresetHydratingRef.current = true;
+    void fetchPodsignalPreferences()
+      .then((prefs) => {
+        setTitleTonePreset(prefs.titleTonePreset);
+        setTitleNichePreset(prefs.titleNichePreset);
+        if (episodeId) {
+          void trackOutputUsage({
+            eventType: 'title_preset_default_applied',
+            episodeId,
+            dedupeSessionKey: `title_defaults_applied:episode_detail:${episodeId}`,
+            payload: {
+              surface: 'episode_detail',
+              tonePreset: prefs.titleTonePreset,
+              nichePreset: prefs.titleNichePreset,
+            },
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        titlePresetHydratingRef.current = false;
+      });
+  }, []);
+
+  const handleTonePresetChange = (next: EpisodeTitleTonePreset) => {
+    const prev = titleTonePreset;
+    setTitleTonePreset(next);
+    if (titlePresetHydratingRef.current || prev === next) return;
+    void trackOutputUsage({
+      eventType: 'title_preset_overridden',
+      episodeId,
+      payload: {
+        surface: 'episode_detail',
+        kind: 'tone',
+        from: prev,
+        to: next,
+        podcastId: episode?.podcastId ?? null,
+      },
+    });
+  };
+
+  const handleNichePresetChange = (next: EpisodeTitleNichePreset) => {
+    const prev = titleNichePreset;
+    setTitleNichePreset(next);
+    if (titlePresetHydratingRef.current || prev === next) return;
+    void trackOutputUsage({
+      eventType: 'title_preset_overridden',
+      episodeId,
+      payload: {
+        surface: 'episode_detail',
+        kind: 'niche',
+        from: prev,
+        to: next,
+        podcastId: episode?.podcastId ?? null,
+      },
+    });
+  };
+
+  useEffect(() => {
     if (!episodeId || !episode) return;
     void trackOutputUsage({
       eventType: 'episode_detail_page_viewed',
@@ -141,6 +316,36 @@ export function EpisodeDetailPage() {
       payload: { podcastId: episode.podcastId },
     });
   }, [episodeId, episode]);
+
+  const loadServerTitleSuggestions = useCallback(
+    async (titleOverride?: string) => {
+      if (!episodeId) return;
+      const requestedTitle = (titleOverride ?? title).trim();
+      setTitleSuggestionsLoading(true);
+      try {
+        const data = await fetchEpisodeTitleSuggestions(episodeId, 3, {
+          titleOverride: requestedTitle || undefined,
+          tonePreset: titleTonePreset,
+          nichePreset: titleNichePreset,
+        });
+        setServerTitleSuggestions(data.suggestions.map((s) => s.label));
+        setServerTitleSuggestionsUsedLlm(data.usedLlm);
+        setServerTitleSuggestionsForTitle(requestedTitle);
+      } catch {
+        setServerTitleSuggestions([]);
+        setServerTitleSuggestionsUsedLlm(false);
+        setServerTitleSuggestionsForTitle('');
+      } finally {
+        setTitleSuggestionsLoading(false);
+      }
+    },
+    [episodeId, title, titleNichePreset, titleTonePreset],
+  );
+
+  useEffect(() => {
+    if (!episodeId || !episode) return;
+    void loadServerTitleSuggestions(episode.title);
+  }, [episodeId, episode?.updatedAt, loadServerTitleSuggestions]);
 
   useEffect(() => {
     if (!episodeId || !episode) return;
@@ -347,6 +552,21 @@ export function EpisodeDetailPage() {
     episode.status !== 'ARCHIVED' &&
     episode.status !== 'PUBLISHED' &&
     !processingQuotaExceeded;
+
+  const fallbackTitleVariants = buildTitleVariants({
+    title,
+    summary: episode.summary,
+    transcript: episode.transcript,
+    clips: episode.clips,
+    transcriptSegments: episode.transcriptSegments,
+  });
+
+  const youtubeTitleVariants =
+    title.trim() === serverTitleSuggestionsForTitle && serverTitleSuggestions.length > 0
+      ? serverTitleSuggestions
+      : fallbackTitleVariants;
+  const effectiveTitleVariantIdx =
+    titleVariantIdx >= 0 && titleVariantIdx < youtubeTitleVariants.length ? titleVariantIdx : 0;
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
@@ -770,8 +990,82 @@ export function EpisodeDetailPage() {
         <p style={{ fontSize: 13, color: '#6b7280', marginBottom: 12 }}>
           Pick a primary title variant for packaging (observed selection in PodSignal).
         </p>
+        <p style={{ fontSize: 12, color: '#6b7280', marginTop: -4, marginBottom: 10 }}>
+          {titleSuggestionsLoading
+            ? 'Generating ranked options from transcript context...'
+            : serverTitleSuggestions.length > 0 && title.trim() === serverTitleSuggestionsForTitle
+              ? serverTitleSuggestionsUsedLlm
+                ? `AI-ranked from transcript, clips, and summary (${titleTonePreset} tone, ${titleNichePreset} niche).`
+                : `Heuristically ranked from transcript, clips, and summary (${titleTonePreset} tone, ${titleNichePreset} niche).`
+              : `Using local fallback options. Click regenerate to rank current title context (${titleTonePreset} tone, ${titleNichePreset} niche).`}
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+          <label style={{ fontSize: 12, color: '#4b5563', fontWeight: 600 }}>
+            Tone
+            <select
+              value={titleTonePreset}
+              onChange={(e) => handleTonePresetChange(e.target.value as EpisodeTitleTonePreset)}
+              style={{
+                marginLeft: 8,
+                padding: '6px 8px',
+                borderRadius: 8,
+                border: '1px solid #d1d5db',
+                background: '#fff',
+                color: '#111827',
+                fontSize: 12,
+              }}
+            >
+              <option value="balanced">Balanced</option>
+              <option value="authority">Authority</option>
+              <option value="curiosity">Curiosity</option>
+              <option value="contrarian">Contrarian</option>
+              <option value="practical">Practical</option>
+            </select>
+          </label>
+          <label style={{ fontSize: 12, color: '#4b5563', fontWeight: 600 }}>
+            Niche
+            <select
+              value={titleNichePreset}
+              onChange={(e) => handleNichePresetChange(e.target.value as EpisodeTitleNichePreset)}
+              style={{
+                marginLeft: 8,
+                padding: '6px 8px',
+                borderRadius: 8,
+                border: '1px solid #d1d5db',
+                background: '#fff',
+                color: '#111827',
+                fontSize: 12,
+              }}
+            >
+              <option value="general">General</option>
+              <option value="b2b">B2B</option>
+              <option value="creator-economy">Creator economy</option>
+              <option value="wellness">Wellness</option>
+              <option value="finance">Finance</option>
+              <option value="tech">Tech</option>
+              <option value="media">Media</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            onClick={() => void loadServerTitleSuggestions(title)}
+            disabled={titleSuggestionsLoading}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 8,
+              border: '1px solid #d1d5db',
+              background: '#fff',
+              color: '#374151',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: titleSuggestionsLoading ? 'wait' : 'pointer',
+            }}
+          >
+            {titleSuggestionsLoading ? 'Regenerating...' : 'Regenerate titles'}
+          </button>
+        </div>
         <div style={{ display: 'grid', gap: 8 }}>
-          {buildTitleVariants(title).map((label, idx) => (
+          {youtubeTitleVariants.map((label, idx) => (
             <label
               key={idx}
               style={{
@@ -780,16 +1074,16 @@ export function EpisodeDetailPage() {
                 alignItems: 'flex-start',
                 padding: 10,
                 borderRadius: 8,
-                border: titleVariantIdx === idx ? '2px solid #6366f1' : '1px solid #e5e7eb',
+                border: effectiveTitleVariantIdx === idx ? '2px solid #6366f1' : '1px solid #e5e7eb',
                 cursor: 'pointer',
               }}
             >
               <input
                 type="radio"
                 name="ytTitle"
-                checked={titleVariantIdx === idx}
+                checked={effectiveTitleVariantIdx === idx}
                 onChange={() => {
-                  if (titleVariantIdx === idx) return;
+                  if (effectiveTitleVariantIdx === idx) return;
                   setTitleVariantIdx(idx);
                   void trackOutputUsage({
                     eventType: 'title_option_selected',

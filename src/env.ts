@@ -12,10 +12,8 @@ import { z } from 'zod';
 import { config } from 'dotenv';
 
 // Load .env file into process.env before validation.
-// override: true ensures .env values take precedence over empty shell vars
-// (common in dev when ANTHROPIC_API_KEY etc. are set but empty in the parent shell).
-// In production, real env vars are injected by the platform and .env is absent — that's fine.
-config({ override: true });
+// Never override existing environment variables: platform-injected secrets/URLs must win.
+config();
 
 const envSchema = z.object({
 // ── Database ───────────────────────────────────────────────────────────────
@@ -62,6 +60,34 @@ const envSchema = z.object({
     .default('3000')
     .transform(Number)
     .describe('HTTP server port (Session 2)'),
+
+  APP_URL: z
+    .string()
+    .optional()
+    .default('')
+    .describe('Public app URL used for redirects/email links'),
+  CORS_ORIGINS: z
+    .string()
+    .optional()
+    .default('')
+    .describe('Comma-separated allowed CORS origins (empty => APP_URL only in prod)'),
+  RATE_LIMIT_ENABLED: z
+    .string()
+    .optional()
+    .default('true')
+    .transform((v) => v.trim().toLowerCase() !== 'false')
+    .describe('Enable HTTP rate limiting (set false to disable)'),
+  RATE_LIMIT_MAX: z
+    .string()
+    .optional()
+    .default('120')
+    .transform((v) => Number.parseInt(v, 10))
+    .describe('Max requests per time window per IP'),
+  RATE_LIMIT_TIME_WINDOW: z
+    .string()
+    .optional()
+    .default('1 minute')
+    .describe('Rate limit time window, e.g. \"1 minute\"'),
 
   // ── Media / file storage ──────────────────────────────────────────────────
   EVIDENCE_VAULT_PATH: z

@@ -1,4 +1,5 @@
 import { useState, useRef, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getUserFacingApiError } from '../api/userFacingError';
@@ -22,9 +23,6 @@ export function Login() {
     !returnToParam.includes('://')
       ? returnToParam
       : null;
-  const postLoginPath = fromState
-    ? `${fromState.pathname}${fromState.search ?? ''}`
-    : safeReturn ?? '/dashboard';
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -37,10 +35,20 @@ export function Login() {
     if (submitLock.current || loading) return;
     submitLock.current = true;
     setError('');
-    setLoading(true);
+    flushSync(() => {
+      setLoading(true);
+    });
     try {
-      await login(email, password);
-      navigate(postLoginPath, { replace: true });
+      const user = await login(email, password);
+      let target: string;
+      if (fromState) {
+        target = `${fromState.pathname}${fromState.search ?? ''}`;
+      } else if (safeReturn) {
+        target = safeReturn;
+      } else {
+        target = user.merchantId ? '/dashboard' : '/onboarding';
+      }
+      navigate(target, { replace: true });
     } catch (err: unknown) {
       setError(getUserFacingApiError(err, 'Sign in failed'));
     } finally {

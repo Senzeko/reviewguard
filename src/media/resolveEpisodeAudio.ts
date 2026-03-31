@@ -10,9 +10,18 @@ export async function resolveEpisodeAudio(episode: {
 }): Promise<{ buffer: Buffer; mime: string }> {
   if (episode.audioLocalRelPath) {
     const full = path.join(env.MEDIA_VAULT_PATH, episode.audioLocalRelPath);
-    const buffer = await readFile(full);
-    const mime = episode.audioMimeType ?? inferMimeFromPath(episode.audioLocalRelPath);
-    return { buffer, mime };
+    try {
+      const buffer = await readFile(full);
+      const mime = episode.audioMimeType ?? inferMimeFromPath(episode.audioLocalRelPath);
+      return { buffer, mime };
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      // Local file may disappear across deploys on ephemeral storage. If a remote
+      // URL exists, use it as a fallback source.
+      if (e?.code !== 'ENOENT' || !episode.audioUrl?.trim().startsWith('http')) {
+        throw err;
+      }
+    }
   }
 
   if (episode.audioUrl?.trim().startsWith('http')) {
@@ -28,6 +37,14 @@ export async function resolveEpisodeAudio(episode: {
         ? ct.split(';')[0]!.trim()
         : 'audio/mpeg';
     return { buffer: Buffer.from(res.data), mime };
+  }
+
+  if (episode.audioLocalRelPath) {
+    throw new Error(
+      `Local audio file is missing at ${path.join(env.MEDIA_VAULT_PATH, episode.audioLocalRelPath)}. ` +
+      'Re-upload audio for this episode or set an HTTPS audio URL. ' +
+      'For Railway deployments, persist MEDIA_VAULT_PATH on a volume.',
+    );
   }
 
   throw new Error('No audio source — upload a file or set an HTTPS audio URL.');

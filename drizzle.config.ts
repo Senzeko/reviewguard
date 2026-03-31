@@ -1,8 +1,8 @@
 import type { Config } from 'drizzle-kit';
 import { config } from 'dotenv';
 
-// Load .env so drizzle-kit CLI picks up DATABASE_URL without requiring
-// the user to manually export it in their shell.
+// Load .env so drizzle-kit CLI picks up DATABASE_URL when shell env is absent.
+// Never override existing env vars: Railway/CI injected DATABASE_URL must win.
 config();
 
 // We load DATABASE_URL directly here to avoid a circular dependency
