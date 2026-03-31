@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { fetchEpisodes, fetchPodcasts, fetchWorkspaceEpisodes } from '../api/client';
+import { fetchEpisodeCampaign, fetchEpisodes, fetchPodcasts, fetchWorkspaceEpisodes } from '../api/client';
 import { getUserFacingApiError } from '../api/userFacingError';
 import type { Episode } from '../types/podsignal';
 import './podsignal-pages.css';
@@ -8,6 +8,7 @@ import './podsignal-pages.css';
 const PAGE_SIZE = 50;
 
 type Row = Episode & { podcastTitle: string };
+type CampaignSnapshot = { status: string; launchStatus: string | null };
 
 function statusLabel(status: string): { label: string; className: string } {
   const s = status.toUpperCase();
@@ -16,6 +17,23 @@ function statusLabel(status: string): { label: string; className: string } {
   if (s === 'PROCESSING') return { label: 'Processing', className: 'ps-badge--purple' };
   if (s === 'FAILED') return { label: 'Failed', className: 'ps-badge--red' };
   return { label: 'Draft', className: 'ps-badge--gray' };
+}
+
+function campaignStatusLabel(status?: string): { label: string; className: string } {
+  const s = (status ?? 'DRAFT').toUpperCase();
+  if (s === 'ACTIVE') return { label: 'Active', className: 'ps-badge--purple' };
+  if (s === 'COMPLETED') return { label: 'Completed', className: 'ps-badge--green' };
+  if (s === 'ARCHIVED') return { label: 'Archived', className: 'ps-badge--gray' };
+  return { label: 'Draft', className: 'ps-badge--gray' };
+}
+
+function launchStatusLabel(status?: string | null): { label: string; className: string } {
+  const s = (status ?? '').toLowerCase();
+  if (s === 'approved') return { label: 'Approved', className: 'ps-badge--green' };
+  if (s === 'exported') return { label: 'Exported', className: 'ps-badge--blue' };
+  if (s === 'measured') return { label: 'Measured', className: 'ps-badge--purple' };
+  if (s === 'draft') return { label: 'Draft', className: 'ps-badge--gray' };
+  return { label: 'In prep', className: 'ps-badge--gray' };
 }
 
 export function EpisodesListPage() {
@@ -27,6 +45,7 @@ export function EpisodesListPage() {
   const [error, setError] = useState('');
   const [q, setQ] = useState('');
   const [usingFallback, setUsingFallback] = useState(false);
+  const [campaignByEpisode, setCampaignByEpisode] = useState<Record<string, CampaignSnapshot>>({});
 
   const loadFallbackByShows = useCallback(async (): Promise<{ episodes: Row[]; total: number }> => {
     const { podcasts } = await fetchPodcasts();
@@ -92,6 +111,44 @@ export function EpisodesListPage() {
       .catch((e) => setError(getUserFacingApiError(e, 'Failed to load more')))
       .finally(() => setLoadingMore(false));
   }, [loadingMore, rows.length, total, usingFallback]);
+
+  useEffect(() => {
+    if (rows.length === 0) {
+      setCampaignByEpisode({});
+      return;
+    }
+    let cancelled = false;
+    const targetRows = rows.slice(0, PAGE_SIZE);
+    void (async () => {
+      const entries = await Promise.all(
+        targetRows.map(async (row) => {
+          try {
+            const campaign = await fetchEpisodeCampaign(row.id);
+            return [
+              row.id,
+              {
+                status: campaign.status,
+                launchStatus:
+                  typeof campaign.launchPack?.status === 'string' ? campaign.launchPack.status : null,
+              } satisfies CampaignSnapshot,
+            ] as const;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const next: Record<string, CampaignSnapshot> = {};
+      for (const e of entries) {
+        if (!e) continue;
+        next[e[0]] = e[1];
+      }
+      setCampaignByEpisode(next);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [rows]);
 
   const filtered = rows.filter((r) => {
     const s = q.trim().toLowerCase();
@@ -169,6 +226,9 @@ export function EpisodesListPage() {
               ) : (
                 filtered.map((ep) => {
                   const st = statusLabel(ep.status);
+                  const campaign = campaignByEpisode[ep.id];
+                  const launch = launchStatusLabel(campaign?.launchStatus);
+                  const campaignBadge = campaignStatusLabel(campaign?.status);
                   return (
                     <tr
                       key={ep.id}
@@ -191,15 +251,17 @@ export function EpisodesListPage() {
                       <td>
                         <span className={`ps-badge ${st.className}`}>{st.label}</span>
                       </td>
-                      <td style={{ fontWeight: 600, color: '#9ca3af' }} title="Coming later">
-                        —
+                      <td>
+                        <span className={`ps-badge ${launch.className}`}>{launch.label}</span>
                       </td>
                       <td>
-                        <span className="ps-badge ps-badge--gray" title="Use Episodes → Launch on the episode">
-                          —
+                        <span className={`ps-badge ${campaignBadge.className}`}>
+                          {campaignBadge.label}
                         </span>
                       </td>
-                      <td style={{ color: '#9ca3af', fontSize: 13 }}>—</td>
+                      <td style={{ color: '#6b7280', fontSize: 13 }}>
+                        {new Date(ep.updatedAt).toLocaleDateString()}
+                      </td>
                       <td style={{ textAlign: 'right', color: '#e5e7eb' }} aria-hidden>
                         ⋯
                       </td>
