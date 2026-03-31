@@ -8,6 +8,9 @@ import {
   fetchWebhookConfig,
   fetchNotificationPreferences,
   updateNotificationPreferences,
+  fetchPodsignalPreferences,
+  fetchTitlePresetAnalytics,
+  updatePodsignalPreferences,
   fetchAccountInfo,
   changePassword,
   fetchTeamMembers,
@@ -18,6 +21,7 @@ import {
   type NotificationPreferences,
   type AccountInfo,
   type TeamMember,
+  type PodsignalPreferences,
 } from '../api/client';
 
 type Tab = 'pos' | 'webhook' | 'notifications' | 'team' | 'account';
@@ -214,8 +218,33 @@ function WebhookTab() {
 function NotificationsTab() {
   const [prefs, setPrefs] = useState<NotificationPreferences | null>(null);
   const [saving, setSaving] = useState(false);
+  const [podsignalPrefs, setPodsignalPrefs] = useState<PodsignalPreferences | null>(null);
+  const [savingPodsignal, setSavingPodsignal] = useState(false);
+  const [recommendedTone, setRecommendedTone] = useState<PodsignalPreferences['titleTonePreset'] | null>(null);
+  const [recommendedNiche, setRecommendedNiche] = useState<PodsignalPreferences['titleNichePreset'] | null>(null);
+  const [recommendationEvidence, setRecommendationEvidence] = useState<{ overrides: number; windowDays: number } | null>(null);
 
-  useEffect(() => { fetchNotificationPreferences().then(setPrefs).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchNotificationPreferences().then(setPrefs).catch(() => {});
+    fetchPodsignalPreferences().then(setPodsignalPrefs).catch(() => {});
+    fetchTitlePresetAnalytics()
+      .then((r) => {
+        const topTone = r.topOverrideTransitions
+          .filter((t) => t.kind === 'tone' && t.count >= 2)
+          .sort((a, b) => b.count - a.count)[0];
+        const topNiche = r.topOverrideTransitions
+          .filter((t) => t.kind === 'niche' && t.count >= 2)
+          .sort((a, b) => b.count - a.count)[0];
+        setRecommendedTone((topTone?.to as PodsignalPreferences['titleTonePreset'] | undefined) ?? null);
+        setRecommendedNiche((topNiche?.to as PodsignalPreferences['titleNichePreset'] | undefined) ?? null);
+        setRecommendationEvidence({ overrides: r.totals.overrides, windowDays: r.windowDays });
+      })
+      .catch(() => {
+        setRecommendedTone(null);
+        setRecommendedNiche(null);
+        setRecommendationEvidence(null);
+      });
+  }, []);
 
   const toggle = async (key: keyof NotificationPreferences['preferences']) => {
     if (!prefs) return;
@@ -269,6 +298,123 @@ function NotificationsTab() {
             </div>
           </div>
         ))}
+      </div>
+
+      <div style={{ ...styles.card, marginTop: 16 }}>
+        <h4 style={styles.subTitle}>PodSignal content defaults</h4>
+        <p style={{ fontSize: 13, color: '#666', margin: '0 0 10px' }}>
+          Set default title strategy for episode packaging and launch pages.
+        </p>
+        {podsignalPrefs ? (
+          <div style={{ display: 'grid', gap: 10, maxWidth: 520 }}>
+            <label style={{ fontSize: 13, color: '#4b5563', fontWeight: 600 }}>
+              Default tone
+              <select
+                value={podsignalPrefs.titleTonePreset}
+                onChange={(e) =>
+                  setPodsignalPrefs((prev) =>
+                    prev ? { ...prev, titleTonePreset: e.target.value as PodsignalPreferences['titleTonePreset'] } : prev,
+                  )
+                }
+                style={{ ...styles.input, marginTop: 6 }}
+              >
+                <option value="balanced">Balanced</option>
+                <option value="authority">Authority</option>
+                <option value="curiosity">Curiosity</option>
+                <option value="contrarian">Contrarian</option>
+                <option value="practical">Practical</option>
+              </select>
+            </label>
+            <label style={{ fontSize: 13, color: '#4b5563', fontWeight: 600 }}>
+              Default niche
+              <select
+                value={podsignalPrefs.titleNichePreset}
+                onChange={(e) =>
+                  setPodsignalPrefs((prev) =>
+                    prev
+                      ? { ...prev, titleNichePreset: e.target.value as PodsignalPreferences['titleNichePreset'] }
+                      : prev,
+                  )
+                }
+                style={{ ...styles.input, marginTop: 6 }}
+              >
+                <option value="general">General</option>
+                <option value="b2b">B2B</option>
+                <option value="creator-economy">Creator economy</option>
+                <option value="wellness">Wellness</option>
+                <option value="finance">Finance</option>
+                <option value="tech">Tech</option>
+                <option value="media">Media</option>
+              </select>
+            </label>
+            <div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!podsignalPrefs) return;
+                  setSavingPodsignal(true);
+                  void updatePodsignalPreferences(podsignalPrefs)
+                    .then((res) => setPodsignalPrefs(res.preferences))
+                    .catch(() => {})
+                    .finally(() => setSavingPodsignal(false));
+                }}
+                style={{ ...styles.primaryBtn, opacity: savingPodsignal ? 0.7 : 1 }}
+                disabled={savingPodsignal}
+              >
+                {savingPodsignal ? 'Saving…' : 'Save content defaults'}
+              </button>
+            </div>
+            {((recommendedTone && recommendedTone !== podsignalPrefs.titleTonePreset) ||
+              (recommendedNiche && recommendedNiche !== podsignalPrefs.titleNichePreset)) ? (
+              <div
+                style={{
+                  border: '1px solid #bfdbfe',
+                  background: '#eff6ff',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  fontSize: 13,
+                  color: '#1e3a8a',
+                }}
+              >
+                <div style={{ marginBottom: 8 }}>
+                  Recommended defaults from real override behavior:
+                  {' '}
+                  <strong>
+                    tone = {recommendedTone ?? podsignalPrefs.titleTonePreset}
+                    , niche = {recommendedNiche ?? podsignalPrefs.titleNichePreset}
+                  </strong>
+                </div>
+                {recommendationEvidence ? (
+                  <div style={{ marginBottom: 8, color: '#1d4ed8', fontSize: 12 }}>
+                    Confidence: based on {recommendationEvidence.overrides} override
+                    {recommendationEvidence.overrides === 1 ? '' : 's'} in the last {recommendationEvidence.windowDays} days.
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = {
+                      titleTonePreset: recommendedTone ?? podsignalPrefs.titleTonePreset,
+                      titleNichePreset: recommendedNiche ?? podsignalPrefs.titleNichePreset,
+                    };
+                    setPodsignalPrefs(next);
+                    setSavingPodsignal(true);
+                    void updatePodsignalPreferences(next)
+                      .then((res) => setPodsignalPrefs(res.preferences))
+                      .catch(() => {})
+                      .finally(() => setSavingPodsignal(false));
+                  }}
+                  style={{ ...styles.primaryBtn, padding: '8px 12px', fontSize: 12 }}
+                  disabled={savingPodsignal}
+                >
+                  Apply recommended defaults
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <p style={{ color: '#888', margin: 0 }}>Loading PodSignal defaults...</p>
+        )}
       </div>
     </div>
   );

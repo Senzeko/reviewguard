@@ -12,6 +12,22 @@ export interface EpisodeTitleSuggestionInput {
   transcriptSegmentTexts: string[];
 }
 
+export type EpisodeTitleTonePreset =
+  | 'balanced'
+  | 'authority'
+  | 'curiosity'
+  | 'contrarian'
+  | 'practical';
+
+export type EpisodeTitleNichePreset =
+  | 'general'
+  | 'b2b'
+  | 'creator-economy'
+  | 'wellness'
+  | 'finance'
+  | 'tech'
+  | 'media';
+
 export interface EpisodeTitleSuggestion {
   label: string;
   score: number;
@@ -94,15 +110,55 @@ function buildContext(input: EpisodeTitleSuggestionInput): string {
   return normalizeText(pieces.join(' '));
 }
 
-function buildRawCandidates(input: EpisodeTitleSuggestionInput, topTerms: string[]): string[] {
+function tonePresetHint(preset: EpisodeTitleTonePreset): string {
+  switch (preset) {
+    case 'authority':
+      return 'prioritize expert framing, proven systems, and credible specificity';
+    case 'curiosity':
+      return 'prioritize curiosity gaps, surprising findings, and high-intrigue hooks';
+    case 'contrarian':
+      return 'prioritize respectful challenge to common assumptions and myth-busting angles';
+    case 'practical':
+      return 'prioritize tactical steps, templates, checklists, and immediate actionability';
+    default:
+      return 'balance curiosity, specificity, and practical value';
+  }
+}
+
+function nichePresetHint(preset: EpisodeTitleNichePreset): string {
+  switch (preset) {
+    case 'b2b':
+      return 'optimize for pipeline, buyers, revenue operations, and GTM clarity';
+    case 'creator-economy':
+      return 'optimize for audience growth, content systems, and monetization';
+    case 'wellness':
+      return 'optimize for habit change, health outcomes, and sustainable routines';
+    case 'finance':
+      return 'optimize for risk/reward framing, cash flow, and practical money decisions';
+    case 'tech':
+      return 'optimize for product, engineering trade-offs, and adoption outcomes';
+    case 'media':
+      return 'optimize for storytelling angles, distribution leverage, and audience attention';
+    default:
+      return 'keep broad and widely relevant to general podcast audiences';
+  }
+}
+
+function buildRawCandidates(
+  input: EpisodeTitleSuggestionInput,
+  topTerms: string[],
+  preset: EpisodeTitleTonePreset,
+  nichePreset: EpisodeTitleNichePreset,
+): string[] {
   const baseTitle = normalizeText(input.title);
   const topicPhrase = chooseTopicPhrase(topTerms);
   const firstClip = normalizeText(input.clipTitles[0] ?? '');
   const secondTopic = topTerms[2] ? toTitleCase(topTerms[2]) : null;
   const thirdTopic = topTerms[3] ? toTitleCase(topTerms[3]) : null;
   const altTopic = topTerms[4] ? toTitleCase(topTerms[4]) : null;
+  const primaryTopic = topTerms[0] ? toTitleCase(topTerms[0]) : null;
 
-  return [
+  const common = [
     baseTitle,
     topicPhrase ? `${baseTitle} | ${topicPhrase}` : `${baseTitle} | Key moments`,
     topicPhrase ? `How ${topicPhrase} actually works (${baseTitle})` : `What this episode gets right: ${baseTitle}`,
@@ -118,6 +174,74 @@ function buildRawCandidates(input: EpisodeTitleSuggestionInput, topTerms: string
     altTopic ? `${altTopic} in 2026: what's changing now` : `${baseTitle}: what's changing now`,
     firstClip ? `${firstClip} (and why it matters)` : `${baseTitle}: one shift that changes everything`,
   ];
+
+  const toneSpecific =
+    preset === 'authority'
+      ? [
+          topicPhrase ? `${topicPhrase} framework trusted by top operators` : `${baseTitle}: the framework that works`,
+          primaryTopic ? `${primaryTopic}: expert playbook for reliable results` : `${baseTitle}: expert playbook`,
+          `${baseTitle}: proven tactics that hold up under pressure`,
+        ]
+      : preset === 'curiosity'
+        ? [
+            topicPhrase ? `Nobody tells you this about ${topicPhrase}` : `${baseTitle}: what most people overlook`,
+            firstClip ? `${firstClip}: the surprising part` : `${baseTitle}: the surprising part`,
+            `${baseTitle}: the counterintuitive lesson that changes the game`,
+          ]
+        : preset === 'contrarian'
+          ? [
+              topicPhrase ? `Everything you've heard about ${topicPhrase} is incomplete` : `${baseTitle}: what people get wrong`,
+              primaryTopic ? `The ${primaryTopic} myth that costs real growth` : `${baseTitle}: the myth that costs growth`,
+              `${baseTitle}: stop following outdated advice`,
+            ]
+          : preset === 'practical'
+            ? [
+                topicPhrase ? `${topicPhrase} checklist: do this next` : `${baseTitle}: your next-step checklist`,
+                primaryTopic ? `${primaryTopic} step-by-step for busy teams` : `${baseTitle}: step-by-step execution`,
+                `${baseTitle}: scripts, examples, and exact actions`,
+              ]
+            : [];
+
+  const nicheSpecific =
+    nichePreset === 'b2b'
+      ? [
+          `${baseTitle}: pipeline lessons that actually convert`,
+          topicPhrase ? `${topicPhrase} for B2B teams: from strategy to revenue` : `${baseTitle}: B2B strategy to revenue`,
+          `${baseTitle}: what buyers care about now`,
+        ]
+      : nichePreset === 'creator-economy'
+        ? [
+            `${baseTitle}: audience growth playbook for creators`,
+            topicPhrase ? `${topicPhrase}: creator monetization that compounds` : `${baseTitle}: creator monetization that compounds`,
+            `${baseTitle}: content systems that scale`,
+          ]
+        : nichePreset === 'wellness'
+          ? [
+              `${baseTitle}: habits that improve consistency`,
+              topicPhrase ? `${topicPhrase}: science-backed wellness habits` : `${baseTitle}: practical wellness habits`,
+              `${baseTitle}: what actually works long-term`,
+            ]
+          : nichePreset === 'finance'
+            ? [
+                `${baseTitle}: smarter money moves this year`,
+                topicPhrase ? `${topicPhrase}: risk, return, and real trade-offs` : `${baseTitle}: risk, return, and trade-offs`,
+                `${baseTitle}: decisions that protect cash flow`,
+              ]
+            : nichePreset === 'tech'
+              ? [
+                  `${baseTitle}: product and engineering trade-offs explained`,
+                  topicPhrase ? `${topicPhrase}: from idea to shipped outcome` : `${baseTitle}: from idea to shipped outcome`,
+                  `${baseTitle}: what technical teams should do next`,
+                ]
+              : nichePreset === 'media'
+                ? [
+                    `${baseTitle}: storytelling that holds attention`,
+                    topicPhrase ? `${topicPhrase}: media distribution that drives reach` : `${baseTitle}: media distribution that drives reach`,
+                    `${baseTitle}: formats that audiences share`,
+                  ]
+                : [];
+
+  return [...common, ...toneSpecific, ...nicheSpecific];
 }
 
 function dedupeCandidates(candidates: string[]): string[] {
@@ -134,7 +258,37 @@ function dedupeCandidates(candidates: string[]): string[] {
   return out;
 }
 
-function scoreDeterministicCandidates(candidates: string[], topTerms: string[]): EpisodeTitleSuggestion[] {
+function scoreDeterministicCandidates(
+  candidates: string[],
+  topTerms: string[],
+  preset: EpisodeTitleTonePreset,
+  nichePreset: EpisodeTitleNichePreset,
+): EpisodeTitleSuggestion[] {
+  const presetRegex =
+    preset === 'authority'
+      ? /(framework|proven|expert|playbook|trusted|system)/i
+      : preset === 'curiosity'
+        ? /(nobody|surprising|secret|what most|unexpected|counterintuitive|why)/i
+        : preset === 'contrarian'
+          ? /(myth|wrong|stop|outdated|truth|actually|misconception)/i
+          : preset === 'practical'
+            ? /(checklist|step-by-step|template|scripts|actions|playbook|guide)/i
+            : /(how|why|stop|mistakes|playbook|works|changing|matters)/i;
+  const nicheRegex =
+    nichePreset === 'b2b'
+      ? /(pipeline|revenue|buyers|gtm|sales|demand)/i
+      : nichePreset === 'creator-economy'
+        ? /(creator|audience|content|monetization|subscriber|growth)/i
+        : nichePreset === 'wellness'
+          ? /(wellness|habit|health|sleep|stress|recovery)/i
+          : nichePreset === 'finance'
+            ? /(finance|money|cash|invest|risk|return|budget)/i
+            : nichePreset === 'tech'
+              ? /(tech|product|engineering|ai|stack|shipped|adoption)/i
+              : nichePreset === 'media'
+                ? /(media|storytelling|distribution|attention|format|audience)/i
+                : null;
+
   return candidates
     .map((candidate) => {
       const normalized = candidate.toLowerCase();
@@ -143,13 +297,13 @@ function scoreDeterministicCandidates(candidates: string[], topTerms: string[]):
       const keywordHits = topTerms.reduce((acc, term) => (normalized.includes(term) ? acc + 1 : acc), 0);
       const keywordScore = Math.min(0.45, keywordHits * 0.15);
       const structureBonus = /[:|?]/.test(candidate) ? 0.08 : 0;
-      const actionBonus =
-        /(how|why|stop|mistakes|playbook|works|changing|matters)/i.test(candidate) ? 0.06 : 0;
-      const score = Number((lenScore + keywordScore + structureBonus + actionBonus).toFixed(4));
+      const toneBonus = presetRegex.test(candidate) ? 0.07 : 0;
+      const nicheBonus = nicheRegex && nicheRegex.test(candidate) ? 0.05 : 0;
+      const score = Number((lenScore + keywordScore + structureBonus + toneBonus + nicheBonus).toFixed(4));
       return {
         label: candidate,
         score,
-        reason: `Heuristic score: length-fit + keyword overlap (${keywordHits}) + hook strength`,
+        reason: `Heuristic score: length-fit + keyword overlap (${keywordHits}) + ${preset} tone + ${nichePreset} niche`,
       };
     })
     .sort((a, b) => b.score - a.score);
@@ -167,6 +321,8 @@ async function getClient(): Promise<InstanceType<typeof import('@anthropic-ai/sd
 async function rerankWithLlm(
   input: EpisodeTitleSuggestionInput,
   scored: EpisodeTitleSuggestion[],
+  tonePreset: EpisodeTitleTonePreset,
+  nichePreset: EpisodeTitleNichePreset,
 ): Promise<EpisodeTitleSuggestion[] | null> {
   const candidates = scored.map((s) => s.label);
   if (candidates.length <= 1) return scored;
@@ -175,6 +331,8 @@ async function rerankWithLlm(
     'You are a podcast YouTube title ranker.',
     'Pick the best titles for click clarity without clickbait.',
     'Use transcript and summary relevance, specificity, and readability.',
+    `Tone preference: ${tonePreset} (${tonePresetHint(tonePreset)}).`,
+    `Niche preference: ${nichePreset} (${nichePresetHint(nichePreset)}).`,
     'Return only JSON matching this schema:',
     '{"ranked":[{"title":"string","score":0-1,"reason":"string"}]}',
     'Only use provided candidate titles. No new titles.',
@@ -232,10 +390,14 @@ async function rerankWithLlm(
 async function generateCandidatesWithLlm(
   input: EpisodeTitleSuggestionInput,
   seeded: string[],
+  tonePreset: EpisodeTitleTonePreset,
+  nichePreset: EpisodeTitleNichePreset,
 ): Promise<string[] | null> {
   const system = [
     'You write high-performing YouTube titles for podcast clips/episodes.',
     'Goal: maximize curiosity and clicks WITHOUT clickbait or false claims.',
+    `Tone preference: ${tonePreset} (${tonePresetHint(tonePreset)}).`,
+    `Niche preference: ${nichePreset} (${nichePresetHint(nichePreset)}).`,
     `Return ONLY JSON: {"candidates":["title1","title2",...]} with 8-14 items.`,
     `Rules: each title <= ${MAX_TITLE_LEN} chars, specific, concrete, readable, no emojis.`,
     'Use strong hooks (why/how/mistakes/framework/what changed), keep truthful to supplied content.',
@@ -279,9 +441,16 @@ async function generateCandidatesWithLlm(
 
 export async function generateEpisodeTitleSuggestions(
   input: EpisodeTitleSuggestionInput,
-  opts?: { limit?: number; allowLlm?: boolean },
+  opts?: {
+    limit?: number;
+    allowLlm?: boolean;
+    tonePreset?: EpisodeTitleTonePreset;
+    nichePreset?: EpisodeTitleNichePreset;
+  },
 ): Promise<EpisodeTitleSuggestionResult> {
   const limit = Math.min(8, Math.max(1, opts?.limit ?? 3));
+  const tonePreset = opts?.tonePreset ?? 'balanced';
+  const nichePreset = opts?.nichePreset ?? 'general';
   const baseTitle = normalizeText(input.title);
   if (!baseTitle) {
     return {
@@ -297,23 +466,23 @@ export async function generateEpisodeTitleSuggestions(
 
   const context = buildContext(input);
   const topTerms = extractTopTerms(context, 8);
-  const seeded = dedupeCandidates(buildRawCandidates(input, topTerms));
+  const seeded = dedupeCandidates(buildRawCandidates(input, topTerms, tonePreset, nichePreset));
 
   let candidatePool = seeded;
   let usedLlm = false;
   if (opts?.allowLlm !== false) {
-    const llmCandidates = await generateCandidatesWithLlm(input, seeded);
+    const llmCandidates = await generateCandidatesWithLlm(input, seeded, tonePreset, nichePreset);
     if (llmCandidates && llmCandidates.length > 0) {
       candidatePool = dedupeCandidates([...llmCandidates, ...seeded]);
       usedLlm = true;
     }
   }
 
-  const deterministic = scoreDeterministicCandidates(candidatePool, topTerms);
+  const deterministic = scoreDeterministicCandidates(candidatePool, topTerms, tonePreset, nichePreset);
 
   let ranked = deterministic;
   if (opts?.allowLlm !== false) {
-    const llmRanked = await rerankWithLlm(input, deterministic);
+    const llmRanked = await rerankWithLlm(input, deterministic, tonePreset, nichePreset);
     if (llmRanked) {
       ranked = llmRanked;
       usedLlm = true;
@@ -329,9 +498,11 @@ export async function generateEpisodeTitleSuggestions(
 
 export function buildDeterministicTitleCandidatesForTest(
   input: EpisodeTitleSuggestionInput,
+  tonePreset: EpisodeTitleTonePreset = 'balanced',
+  nichePreset: EpisodeTitleNichePreset = 'general',
 ): EpisodeTitleSuggestion[] {
   const context = buildContext(input);
   const topTerms = extractTopTerms(context, 8);
-  const unique = dedupeCandidates(buildRawCandidates(input, topTerms));
-  return scoreDeterministicCandidates(unique, topTerms);
+  const unique = dedupeCandidates(buildRawCandidates(input, topTerms, tonePreset, nichePreset));
+  return scoreDeterministicCandidates(unique, topTerms, tonePreset, nichePreset);
 }

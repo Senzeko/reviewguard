@@ -3,18 +3,24 @@ import { useParams, Link } from 'react-router-dom';
 import {
   fetchEpisode,
   fetchEpisodeCampaign,
+  fetchPodsignalPreferences,
+  fetchEpisodeTitleSuggestions,
   patchEpisodeCampaign,
   addCampaignTask,
   patchCampaignTask,
   deleteCampaignTask,
   createPodsignalTrackableLink,
   fetchPodsignalTrackableLinks,
+  type EpisodeTitleTonePreset,
+  type EpisodeTitleNichePreset,
 } from '../api/client';
 import type { EpisodeCampaign, CampaignStatus, LaunchPackState, TrackableLinkSummary } from '../types/podsignal';
 import { useEpisodeLiveUpdates } from '../hooks/useEpisodeLiveUpdates';
 import { trackOutputUsage } from '../lib/trackOutputUsage';
 
 const STATUSES: CampaignStatus[] = ['DRAFT', 'ACTIVE', 'COMPLETED', 'ARCHIVED'];
+
+type ScoreBand = 'excellent' | 'strong' | 'emerging' | 'early';
 
 function buildTitleVariants(episodeTitle: string): string[] {
   const t = episodeTitle.trim();
@@ -35,6 +41,57 @@ function defaultSocial(episodeTitle: string): string {
   return `New episode: ${episodeTitle} — link in bio.`;
 }
 
+function clamp(n: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function scoreBand(score: number): ScoreBand {
+  if (score >= 80) return 'excellent';
+  if (score >= 65) return 'strong';
+  if (score >= 45) return 'emerging';
+  return 'early';
+}
+
+function scoreBandLabel(band: ScoreBand): string {
+  if (band === 'excellent') return 'Excellent';
+  if (band === 'strong') return 'Strong';
+  if (band === 'emerging') return 'Emerging';
+  return 'Early';
+}
+
+function scoreBandColors(band: ScoreBand): { bg: string; border: string; text: string } {
+  if (band === 'excellent') return { bg: '#ecfdf5', border: '#86efac', text: '#065f46' };
+  if (band === 'strong') return { bg: '#eff6ff', border: '#93c5fd', text: '#1e3a8a' };
+  if (band === 'emerging') return { bg: '#fffbeb', border: '#fcd34d', text: '#92400e' };
+  return { bg: '#fef2f2', border: '#fecaca', text: '#991b1b' };
+}
+
+function buildLaunchProofScore(input: {
+  doneCount: number;
+  totalTasks: number;
+  approved: boolean;
+  campaignStatus: CampaignStatus;
+  linksCount: number;
+  clicksObserved: number;
+}): {
+  total: number;
+  execution: number;
+  activation: number;
+  sponsorProof: number;
+  band: ScoreBand;
+} {
+  const taskRatio = input.totalTasks > 0 ? input.doneCount / input.totalTasks : 0;
+  const execution = Math.round(
+    clamp(taskRatio * 65 + (input.approved ? 25 : 0) + (input.campaignStatus !== 'DRAFT' ? 10 : 0), 0, 100),
+  );
+  const activation = Math.round(clamp(input.linksCount * 20 + Math.log10(1 + input.clicksObserved) * 28, 0, 100));
+  const sponsorProof = Math.round(
+    clamp((input.approved ? 35 : 0) + input.linksCount * 15 + Math.log10(1 + input.clicksObserved) * 35, 0, 100),
+  );
+  const total = Math.round(execution * 0.45 + activation * 0.25 + sponsorProof * 0.3);
+  return { total, execution, activation, sponsorProof, band: scoreBand(total) };
+}
+
 export function EpisodeLaunchPage() {
   const { episodeId } = useParams<{ episodeId: string }>();
   const [episodeTitle, setEpisodeTitle] = useState('');
@@ -50,11 +107,19 @@ export function EpisodeLaunchPage() {
   const [creatingLink, setCreatingLink] = useState(false);
   const [appleDesc, setAppleDesc] = useState('');
   const [spotifyDesc, setSpotifyDesc] = useState('');
+  const [serverTitleSuggestions, setServerTitleSuggestions] = useState<string[]>([]);
+  const [serverTitleSuggestionsUsedLlm, setServerTitleSuggestionsUsedLlm] = useState(false);
+  const [titleSuggestionsLoading, setTitleSuggestionsLoading] = useState(false);
+  const [titleTonePreset, setTitleTonePreset] = useState<EpisodeTitleTonePreset>('balanced');
+  const [titleNichePreset, setTitleNichePreset] = useState<EpisodeTitleNichePreset>('general');
 
   const taskDoneLogged = useRef(new Set<string>());
   const lastTitleIdx = useRef<number | null>(null);
+  const titlePrefsLoadedRef = useRef(false);
+  const titlePresetHydratingRef = useRef(false);
 
-  const titleVariants = useMemo(() => buildTitleVariants(episodeTitle), [episodeTitle]);
+  const fallbackTitleVariants = useMemo(() => buildTitleVariants(episodeTitle), [episodeTitle]);
+  const titleVariants = serverTitleSuggestions.length > 0 ? serverTitleSuggestions : fallbackTitleVariants;
 
   const lp: LaunchPackState = campaign?.launchPack ?? {};
 
@@ -95,6 +160,67 @@ export function EpisodeLaunchPage() {
   }, [load]);
 
   useEffect(() => {
+    if (titlePrefsLoadedRef.current) return;
+    titlePrefsLoadedRef.current = true;
+    titlePresetHydratingRef.current = true;
+    void fetchPodsignalPreferences()
+      .then((prefs) => {
+        setTitleTonePreset(prefs.titleTonePreset);
+        setTitleNichePreset(prefs.titleNichePreset);
+        if (episodeId) {
+          void trackOutputUsage({
+            eventType: 'title_preset_default_applied',
+            episodeId,
+            dedupeSessionKey: `title_defaults_applied:episode_launch:${episodeId}`,
+            payload: {
+              surface: 'episode_launch',
+              tonePreset: prefs.titleTonePreset,
+              nichePreset: prefs.titleNichePreset,
+            },
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        titlePresetHydratingRef.current = false;
+      });
+  }, []);
+
+  const handleTonePresetChange = (next: EpisodeTitleTonePreset) => {
+    const prev = titleTonePreset;
+    setTitleTonePreset(next);
+    if (titlePresetHydratingRef.current || prev === next) return;
+    void trackOutputUsage({
+      eventType: 'title_preset_overridden',
+      episodeId,
+      payload: {
+        surface: 'episode_launch',
+        kind: 'tone',
+        from: prev,
+        to: next,
+        podcastId: podcastId || null,
+      },
+    });
+  };
+
+  const handleNichePresetChange = (next: EpisodeTitleNichePreset) => {
+    const prev = titleNichePreset;
+    setTitleNichePreset(next);
+    if (titlePresetHydratingRef.current || prev === next) return;
+    void trackOutputUsage({
+      eventType: 'title_preset_overridden',
+      episodeId,
+      payload: {
+        surface: 'episode_launch',
+        kind: 'niche',
+        from: prev,
+        to: next,
+        podcastId: podcastId || null,
+      },
+    });
+  };
+
+  useEffect(() => {
     if (!episodeId || loading) return;
     void trackOutputUsage({
       eventType: 'episode_launch_page_viewed',
@@ -112,6 +238,39 @@ export function EpisodeLaunchPage() {
     onEpisodeEvent: () => {},
     onCampaignEvent: () => void load({ silent: true }),
   });
+
+  const loadServerTitleSuggestions = useCallback(
+    async (titleOverride?: string) => {
+      if (!episodeId) return;
+      const requestedTitle = (titleOverride ?? episodeTitle).trim();
+      if (!requestedTitle) {
+        setServerTitleSuggestions([]);
+        setServerTitleSuggestionsUsedLlm(false);
+        return;
+      }
+      setTitleSuggestionsLoading(true);
+      try {
+        const data = await fetchEpisodeTitleSuggestions(episodeId, 3, {
+          titleOverride: requestedTitle,
+          tonePreset: titleTonePreset,
+          nichePreset: titleNichePreset,
+        });
+        setServerTitleSuggestions(data.suggestions.map((s) => s.label));
+        setServerTitleSuggestionsUsedLlm(data.usedLlm);
+      } catch {
+        setServerTitleSuggestions([]);
+        setServerTitleSuggestionsUsedLlm(false);
+      } finally {
+        setTitleSuggestionsLoading(false);
+      }
+    },
+    [episodeId, episodeTitle, titleTonePreset, titleNichePreset],
+  );
+
+  useEffect(() => {
+    if (!episodeId || !episodeTitle) return;
+    void loadServerTitleSuggestions(episodeTitle);
+  }, [episodeId, episodeTitle, titleTonePreset, titleNichePreset, loadServerTitleSuggestions]);
 
   const persistLaunchPack = async (patch: Record<string, unknown>) => {
     if (!episodeId || !campaign) return;
@@ -317,6 +476,16 @@ export function EpisodeLaunchPage() {
   const doneCount = campaign.tasks.filter((t) => t.doneAt).length;
   const total = campaign.tasks.length;
   const progressPct = total === 0 ? 0 : Math.round((doneCount / total) * 100);
+  const clicksObserved = links.reduce((sum, link) => sum + (Number.isFinite(link.clicksObserved) ? link.clicksObserved : 0), 0);
+  const proofScore = buildLaunchProofScore({
+    doneCount,
+    totalTasks: total,
+    approved: lp.status === 'approved' || lp.status === 'exported' || lp.status === 'measured',
+    campaignStatus: campaign.status,
+    linksCount: links.length,
+    clicksObserved,
+  });
+  const proofColors = scoreBandColors(proofScore.band);
 
   const selectedTitleIdx =
     typeof lp.selectedTitleIndex === 'number' && lp.selectedTitleIndex < titleVariants.length
@@ -350,8 +519,102 @@ export function EpisodeLaunchPage() {
         </div>
       </section>
 
+      <section
+        style={{
+          ...styles.metaCard,
+          background: proofColors.bg,
+          borderColor: proofColors.border,
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <h2 style={{ fontSize: 16, margin: 0, color: '#111827' }}>Launch Proof Score</h2>
+          <span
+            style={{
+              padding: '6px 10px',
+              borderRadius: 999,
+              border: `1px solid ${proofColors.border}`,
+              color: proofColors.text,
+              background: '#fff',
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            {proofScore.total}/100 · {scoreBandLabel(proofScore.band)}
+          </span>
+        </div>
+        <p style={{ fontSize: 12, color: '#4b5563', margin: '8px 0 12px' }}>
+          Signature scorecard for sponsor readiness: execution + audience activation + evidence strength.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 8 }}>
+          <div style={styles.scoreCell}>
+            <strong style={styles.scoreValue}>{proofScore.execution}</strong>
+            <span style={styles.scoreLabel}>Execution</span>
+          </div>
+          <div style={styles.scoreCell}>
+            <strong style={styles.scoreValue}>{proofScore.activation}</strong>
+            <span style={styles.scoreLabel}>Activation</span>
+          </div>
+          <div style={styles.scoreCell}>
+            <strong style={styles.scoreValue}>{proofScore.sponsorProof}</strong>
+            <span style={styles.scoreLabel}>Sponsor proof</span>
+          </div>
+        </div>
+        <p style={{ fontSize: 12, color: '#6b7280', marginTop: 10, marginBottom: 0 }}>
+          Benchmark: target <strong>65+</strong> before outreach; <strong>80+</strong> is sponsor-ready for most cold intros.
+        </p>
+      </section>
+
       <section style={styles.metaCard}>
         <h2 style={{ fontSize: 16, margin: '0 0 10px', color: '#111827' }}>Title options (pick one)</h2>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 10px' }}>
+          {titleSuggestionsLoading
+            ? 'Generating ranked options from transcript context...'
+            : serverTitleSuggestions.length > 0
+              ? serverTitleSuggestionsUsedLlm
+                ? `AI-ranked options (${titleTonePreset} tone, ${titleNichePreset} niche).`
+                : `Heuristically ranked options (${titleTonePreset} tone, ${titleNichePreset} niche).`
+              : 'Using fallback title options.'}
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+          <label style={styles.smallLabel}>
+            Tone
+            <select
+              value={titleTonePreset}
+              onChange={(e) => handleTonePresetChange(e.target.value as EpisodeTitleTonePreset)}
+              style={styles.select}
+            >
+              <option value="balanced">Balanced</option>
+              <option value="authority">Authority</option>
+              <option value="curiosity">Curiosity</option>
+              <option value="contrarian">Contrarian</option>
+              <option value="practical">Practical</option>
+            </select>
+          </label>
+          <label style={styles.smallLabel}>
+            Niche
+            <select
+              value={titleNichePreset}
+              onChange={(e) => handleNichePresetChange(e.target.value as EpisodeTitleNichePreset)}
+              style={styles.select}
+            >
+              <option value="general">General</option>
+              <option value="b2b">B2B</option>
+              <option value="creator-economy">Creator economy</option>
+              <option value="wellness">Wellness</option>
+              <option value="finance">Finance</option>
+              <option value="tech">Tech</option>
+              <option value="media">Media</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            style={styles.copyBtn}
+            onClick={() => void loadServerTitleSuggestions(episodeTitle)}
+            disabled={titleSuggestionsLoading}
+          >
+            {titleSuggestionsLoading ? 'Regenerating…' : 'Regenerate titles'}
+          </button>
+        </div>
         <div style={{ display: 'grid', gap: 8 }}>
           {titleVariants.map((label, idx) => (
             <label
@@ -682,6 +945,24 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #e5e7eb',
     borderRadius: 10,
     padding: 14,
+  },
+  scoreCell: {
+    background: '#fff',
+    border: '1px solid #e5e7eb',
+    borderRadius: 8,
+    padding: '10px 12px',
+    display: 'grid',
+    gap: 2,
+  },
+  scoreValue: {
+    fontSize: 20,
+    lineHeight: 1.1,
+    color: '#111827',
+  },
+  scoreLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+    fontWeight: 600,
   },
   select: {
     marginLeft: 8,

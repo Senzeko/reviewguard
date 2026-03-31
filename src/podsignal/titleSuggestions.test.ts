@@ -39,4 +39,36 @@ describe('titleSuggestions', () => {
     expect(out.suggestions).toHaveLength(3);
     expect(out.suggestions[0]!.label).toContain('Episode');
   });
+
+  it('adapts deterministic candidates by tone preset', () => {
+    const input = {
+      title: 'How creators can grow podcast reach',
+      summary: 'We break down audience growth, retention loops, and guest collaboration.',
+      transcript:
+        'Audience growth depends on consistency, retention, and distribution. We also discuss newsletter loops.',
+      clipTitles: ['Retention loops that compound', 'Guest episodes that convert'],
+      transcriptSegmentTexts: ['Audience growth starts with retention.', 'Newsletter distribution can lift return listens.'],
+    };
+    const contrarian = buildDeterministicTitleCandidatesForTest(input, 'contrarian');
+    const practical = buildDeterministicTitleCandidatesForTest(input, 'practical');
+
+    expect(contrarian.some((r) => /myth|wrong|outdated|stop/i.test(r.label))).toBe(true);
+    expect(practical.some((r) => /checklist|step-by-step|scripts|actions/i.test(r.label))).toBe(true);
+  });
+
+  it('adapts deterministic candidates by niche preset', () => {
+    const input = {
+      title: 'How creators can grow podcast reach',
+      summary: 'We break down audience growth, retention loops, and guest collaboration.',
+      transcript:
+        'Audience growth depends on consistency, retention, and distribution. We also discuss newsletter loops.',
+      clipTitles: ['Retention loops that compound', 'Guest episodes that convert'],
+      transcriptSegmentTexts: ['Audience growth starts with retention.', 'Newsletter distribution can lift return listens.'],
+    };
+    const b2b = buildDeterministicTitleCandidatesForTest(input, 'balanced', 'b2b');
+    const finance = buildDeterministicTitleCandidatesForTest(input, 'balanced', 'finance');
+
+    expect(b2b.some((r) => /pipeline|revenue|buyers|gtm/i.test(r.label))).toBe(true);
+    expect(finance.some((r) => /money|cash|risk|return|finance/i.test(r.label))).toBe(true);
+  });
 });

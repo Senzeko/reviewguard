@@ -24,6 +24,8 @@ const CLIENT_EMITTED: string[] = [
   'pilot_ui_nav',
   'analytics_page_viewed',
   'host_metric_snapshot_logged',
+  'title_preset_default_applied',
+  'title_preset_overridden',
 ];
 
 /** Emitted server-side on POST /api/podsignal/trackable-links (not duplicated on client). */

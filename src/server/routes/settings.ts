@@ -7,6 +7,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
+import { z } from 'zod';
 import { db } from '../../db/index.js';
 import { merchants, merchantUsers } from '../../db/schema.js';
 import { enqueue, JobType } from '../../queue/jobs.js';
@@ -14,6 +15,10 @@ import { isEmailConfigured } from '../../email/service.js';
 import { getSquareOAuthUrl } from '../../pos/square.js';
 import { getCloverOAuthUrl } from '../../pos/clover.js';
 import { hashPassword, verifyPassword } from '../../auth/password.js';
+import type {
+  EpisodeTitleNichePreset,
+  EpisodeTitleTonePreset,
+} from '../../podsignal/titleSuggestions.js';
 
 function getBaseUrl(request: { protocol: string; hostname: string }): string {
   return `${request.protocol}://${request.hostname}`;
@@ -155,6 +160,28 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
     dailyDigest: false,
   };
 
+  const DEFAULT_PODSIGNAL_PREFS: {
+    titleTonePreset: EpisodeTitleTonePreset;
+    titleNichePreset: EpisodeTitleNichePreset;
+  } = {
+    titleTonePreset: 'balanced',
+    titleNichePreset: 'general',
+  };
+
+  type UserSettingsBlob = NotifPrefs & {
+    podsignalTitleDefaults?: {
+      titleTonePreset?: EpisodeTitleTonePreset;
+      titleNichePreset?: EpisodeTitleNichePreset;
+    };
+  };
+
+  const podsignalPrefsSchema = z.object({
+    titleTonePreset: z.enum(['balanced', 'authority', 'curiosity', 'contrarian', 'practical']).optional(),
+    titleNichePreset: z
+      .enum(['general', 'b2b', 'creator-economy', 'wellness', 'finance', 'tech', 'media'])
+      .optional(),
+  });
+
   fastify.get('/notifications', async (request, reply) => {
     if (!request.user) {
       return reply.status(401).send({ error: 'Not authenticated' });
@@ -205,6 +232,69 @@ export async function settingsRoutes(fastify: FastifyInstance): Promise<void> {
       .where(eq(merchantUsers.id, request.user.userId));
 
     return reply.send({ ok: true, preferences: updated });
+  });
+
+  // ── PodSignal Content Defaults ────────────────────────────────────────────
+
+  fastify.get('/podsignal', async (request, reply) => {
+    if (!request.user) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+
+    const rows = await db
+      .select({ notificationPrefs: merchantUsers.notificationPrefs })
+      .from(merchantUsers)
+      .where(eq(merchantUsers.id, request.user.userId))
+      .limit(1);
+
+    const blob = (rows[0]?.notificationPrefs as UserSettingsBlob | null) ?? (DEFAULT_PREFS as UserSettingsBlob);
+    const defaults = blob.podsignalTitleDefaults ?? {};
+    const titleTonePreset = defaults.titleTonePreset ?? DEFAULT_PODSIGNAL_PREFS.titleTonePreset;
+    const titleNichePreset = defaults.titleNichePreset ?? DEFAULT_PODSIGNAL_PREFS.titleNichePreset;
+
+    return reply.send({ titleTonePreset, titleNichePreset });
+  });
+
+  fastify.put<{
+    Body: Partial<{ titleTonePreset: EpisodeTitleTonePreset; titleNichePreset: EpisodeTitleNichePreset }>;
+  }>('/podsignal', async (request, reply) => {
+    if (!request.user) {
+      return reply.status(401).send({ error: 'Not authenticated' });
+    }
+
+    const parsed = podsignalPrefsSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.status(400).send({ error: 'Invalid body', details: parsed.error.issues });
+    }
+
+    const rows = await db
+      .select({ notificationPrefs: merchantUsers.notificationPrefs })
+      .from(merchantUsers)
+      .where(eq(merchantUsers.id, request.user.userId))
+      .limit(1);
+
+    const current =
+      (rows[0]?.notificationPrefs as UserSettingsBlob | null) ?? (DEFAULT_PREFS as UserSettingsBlob);
+    const next = {
+      titleTonePreset:
+        parsed.data.titleTonePreset ??
+        current.podsignalTitleDefaults?.titleTonePreset ??
+        DEFAULT_PODSIGNAL_PREFS.titleTonePreset,
+      titleNichePreset:
+        parsed.data.titleNichePreset ??
+        current.podsignalTitleDefaults?.titleNichePreset ??
+        DEFAULT_PODSIGNAL_PREFS.titleNichePreset,
+    };
+
+    await db
+      .update(merchantUsers)
+      .set({
+        notificationPrefs: { ...current, podsignalTitleDefaults: next },
+        updatedAt: new Date(),
+      })
+      .where(eq(merchantUsers.id, request.user.userId));
+
+    return reply.send({ ok: true, preferences: next });
   });
 
   // ── Account Info ───────────────────────────────────────────────────────────

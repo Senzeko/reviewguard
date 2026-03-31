@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   fetchBillingQuotaStatus,
   fetchEpisode,
+  fetchPodsignalPreferences,
   fetchEpisodeTitleSuggestions,
   patchEpisode,
   patchEpisodeClip,
@@ -10,6 +11,8 @@ import {
   processEpisode,
   uploadEpisodeAudio,
   type EpisodeConflictPayload,
+  type EpisodeTitleNichePreset,
+  type EpisodeTitleTonePreset,
 } from '../api/client';
 import type { EpisodeDetail } from '../types/podsignal';
 import { trackOutputUsage } from '../lib/trackOutputUsage';
@@ -173,8 +176,12 @@ export function EpisodeDetailPage() {
   const [serverTitleSuggestionsUsedLlm, setServerTitleSuggestionsUsedLlm] = useState(false);
   const [titleSuggestionsLoading, setTitleSuggestionsLoading] = useState(false);
   const [serverTitleSuggestionsForTitle, setServerTitleSuggestionsForTitle] = useState('');
+  const [titleTonePreset, setTitleTonePreset] = useState<EpisodeTitleTonePreset>('balanced');
+  const [titleNichePreset, setTitleNichePreset] = useState<EpisodeTitleNichePreset>('general');
 
   const userEditedRef = useRef({ title: false, audioUrl: false });
+  const titlePrefsLoadedRef = useRef(false);
+  const titlePresetHydratingRef = useRef(false);
   const baselineUpdatedAtRef = useRef<string | null>(null);
   const saveLockRef = useRef(false);
   const processLockRef = useRef(false);
@@ -240,6 +247,67 @@ export function EpisodeDetailPage() {
   }, [episodeId]);
 
   useEffect(() => {
+    if (titlePrefsLoadedRef.current) return;
+    titlePrefsLoadedRef.current = true;
+    titlePresetHydratingRef.current = true;
+    void fetchPodsignalPreferences()
+      .then((prefs) => {
+        setTitleTonePreset(prefs.titleTonePreset);
+        setTitleNichePreset(prefs.titleNichePreset);
+        if (episodeId) {
+          void trackOutputUsage({
+            eventType: 'title_preset_default_applied',
+            episodeId,
+            dedupeSessionKey: `title_defaults_applied:episode_detail:${episodeId}`,
+            payload: {
+              surface: 'episode_detail',
+              tonePreset: prefs.titleTonePreset,
+              nichePreset: prefs.titleNichePreset,
+            },
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        titlePresetHydratingRef.current = false;
+      });
+  }, []);
+
+  const handleTonePresetChange = (next: EpisodeTitleTonePreset) => {
+    const prev = titleTonePreset;
+    setTitleTonePreset(next);
+    if (titlePresetHydratingRef.current || prev === next) return;
+    void trackOutputUsage({
+      eventType: 'title_preset_overridden',
+      episodeId,
+      payload: {
+        surface: 'episode_detail',
+        kind: 'tone',
+        from: prev,
+        to: next,
+        podcastId: episode?.podcastId ?? null,
+      },
+    });
+  };
+
+  const handleNichePresetChange = (next: EpisodeTitleNichePreset) => {
+    const prev = titleNichePreset;
+    setTitleNichePreset(next);
+    if (titlePresetHydratingRef.current || prev === next) return;
+    void trackOutputUsage({
+      eventType: 'title_preset_overridden',
+      episodeId,
+      payload: {
+        surface: 'episode_detail',
+        kind: 'niche',
+        from: prev,
+        to: next,
+        podcastId: episode?.podcastId ?? null,
+      },
+    });
+  };
+
+  useEffect(() => {
     if (!episodeId || !episode) return;
     void trackOutputUsage({
       eventType: 'episode_detail_page_viewed',
@@ -257,6 +325,8 @@ export function EpisodeDetailPage() {
       try {
         const data = await fetchEpisodeTitleSuggestions(episodeId, 3, {
           titleOverride: requestedTitle || undefined,
+          tonePreset: titleTonePreset,
+          nichePreset: titleNichePreset,
         });
         setServerTitleSuggestions(data.suggestions.map((s) => s.label));
         setServerTitleSuggestionsUsedLlm(data.usedLlm);
@@ -269,7 +339,7 @@ export function EpisodeDetailPage() {
         setTitleSuggestionsLoading(false);
       }
     },
-    [episodeId, title],
+    [episodeId, title, titleNichePreset, titleTonePreset],
   );
 
   useEffect(() => {
@@ -925,11 +995,57 @@ export function EpisodeDetailPage() {
             ? 'Generating ranked options from transcript context...'
             : serverTitleSuggestions.length > 0 && title.trim() === serverTitleSuggestionsForTitle
               ? serverTitleSuggestionsUsedLlm
-                ? 'AI-ranked from transcript, clips, and summary.'
-                : 'Heuristically ranked from transcript, clips, and summary.'
-              : 'Using local fallback options. Click regenerate to rank current title context.'}
+                ? `AI-ranked from transcript, clips, and summary (${titleTonePreset} tone, ${titleNichePreset} niche).`
+                : `Heuristically ranked from transcript, clips, and summary (${titleTonePreset} tone, ${titleNichePreset} niche).`
+              : `Using local fallback options. Click regenerate to rank current title context (${titleTonePreset} tone, ${titleNichePreset} niche).`}
         </p>
-        <div style={{ marginBottom: 10 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+          <label style={{ fontSize: 12, color: '#4b5563', fontWeight: 600 }}>
+            Tone
+            <select
+              value={titleTonePreset}
+              onChange={(e) => handleTonePresetChange(e.target.value as EpisodeTitleTonePreset)}
+              style={{
+                marginLeft: 8,
+                padding: '6px 8px',
+                borderRadius: 8,
+                border: '1px solid #d1d5db',
+                background: '#fff',
+                color: '#111827',
+                fontSize: 12,
+              }}
+            >
+              <option value="balanced">Balanced</option>
+              <option value="authority">Authority</option>
+              <option value="curiosity">Curiosity</option>
+              <option value="contrarian">Contrarian</option>
+              <option value="practical">Practical</option>
+            </select>
+          </label>
+          <label style={{ fontSize: 12, color: '#4b5563', fontWeight: 600 }}>
+            Niche
+            <select
+              value={titleNichePreset}
+              onChange={(e) => handleNichePresetChange(e.target.value as EpisodeTitleNichePreset)}
+              style={{
+                marginLeft: 8,
+                padding: '6px 8px',
+                borderRadius: 8,
+                border: '1px solid #d1d5db',
+                background: '#fff',
+                color: '#111827',
+                fontSize: 12,
+              }}
+            >
+              <option value="general">General</option>
+              <option value="b2b">B2B</option>
+              <option value="creator-economy">Creator economy</option>
+              <option value="wellness">Wellness</option>
+              <option value="finance">Finance</option>
+              <option value="tech">Tech</option>
+              <option value="media">Media</option>
+            </select>
+          </label>
           <button
             type="button"
             onClick={() => void loadServerTitleSuggestions(title)}

@@ -323,10 +323,26 @@ export interface EpisodeTitleSuggestion {
   reason: string;
 }
 
+export type EpisodeTitleTonePreset =
+  | 'balanced'
+  | 'authority'
+  | 'curiosity'
+  | 'contrarian'
+  | 'practical';
+
+export type EpisodeTitleNichePreset =
+  | 'general'
+  | 'b2b'
+  | 'creator-economy'
+  | 'wellness'
+  | 'finance'
+  | 'tech'
+  | 'media';
+
 export async function fetchEpisodeTitleSuggestions(
   episodeId: string,
   limit = 3,
-  opts?: { titleOverride?: string },
+  opts?: { titleOverride?: string; tonePreset?: EpisodeTitleTonePreset; nichePreset?: EpisodeTitleNichePreset },
 ): Promise<{
   suggestions: EpisodeTitleSuggestion[];
   usedLlm: boolean;
@@ -337,7 +353,12 @@ export async function fetchEpisodeTitleSuggestions(
     usedLlm: boolean;
     generatedAt: string;
   }>(`/api/episodes/${episodeId}/title-suggestions`, {
-    params: { limit, ...(opts?.titleOverride ? { title: opts.titleOverride } : {}) },
+    params: {
+      limit,
+      ...(opts?.titleOverride ? { title: opts.titleOverride } : {}),
+      ...(opts?.tonePreset ? { tonePreset: opts.tonePreset } : {}),
+      ...(opts?.nichePreset ? { nichePreset: opts.nichePreset } : {}),
+    },
   });
   return data;
 }
@@ -483,6 +504,11 @@ export interface NotificationPreferences {
   };
 }
 
+export interface PodsignalPreferences {
+  titleTonePreset: EpisodeTitleTonePreset;
+  titleNichePreset: EpisodeTitleNichePreset;
+}
+
 export interface AccountInfo {
   email: string;
   fullName: string;
@@ -529,6 +555,21 @@ export async function changePassword(currentPassword: string, newPassword: strin
 
 export async function updateNotificationPreferences(prefs: Partial<NotificationPreferences['preferences']>): Promise<{ ok: boolean; preferences: NotificationPreferences['preferences'] }> {
   const { data } = await api.put('/api/settings/notifications', prefs);
+  return data;
+}
+
+export async function fetchPodsignalPreferences(): Promise<PodsignalPreferences> {
+  const { data } = await api.get<PodsignalPreferences>('/api/settings/podsignal');
+  return data;
+}
+
+export async function updatePodsignalPreferences(
+  prefs: Partial<PodsignalPreferences>,
+): Promise<{ ok: boolean; preferences: PodsignalPreferences }> {
+  const { data } = await api.put<{ ok: boolean; preferences: PodsignalPreferences }>(
+    '/api/settings/podsignal',
+    prefs,
+  );
   return data;
 }
 
@@ -623,9 +664,44 @@ export interface PodsignalReportSummary {
   };
 }
 
+export interface TitlePresetAnalyticsSurfaceSummary {
+  defaultsApplied: number;
+  overrides: number;
+  overrideRate: number;
+}
+
+export interface TitlePresetAnalyticsResponse {
+  windowDays: number;
+  totals: {
+    defaultsApplied: number;
+    overrides: number;
+    overrideRate: number;
+  };
+  surfaces: {
+    episodeDetail: TitlePresetAnalyticsSurfaceSummary;
+    episodeLaunch: TitlePresetAnalyticsSurfaceSummary;
+  };
+  topOverrideTransitions: Array<{
+    kind: string;
+    from: string;
+    to: string;
+    surface: string;
+    count: number;
+  }>;
+}
+
 /** Rolling-window workspace summary; `evidenceScores` does not require Launch Evidence Graph migrations. */
 export async function fetchPodsignalReportSummary(): Promise<PodsignalReportSummary> {
   const { data } = await api.get<PodsignalReportSummary>('/api/podsignal/report-summary');
+  return data;
+}
+
+export async function fetchTitlePresetAnalytics(
+  windowDays = 30,
+): Promise<TitlePresetAnalyticsResponse> {
+  const { data } = await api.get<TitlePresetAnalyticsResponse>('/api/podsignal/title-preset-analytics', {
+    params: { windowDays },
+  });
   return data;
 }
 

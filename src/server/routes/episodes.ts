@@ -30,7 +30,11 @@ import {
   resolveWorkspacePlan,
   workspaceCapsForPlan,
 } from '../../billing/workspaceCaps.js';
-import { generateEpisodeTitleSuggestions } from '../../podsignal/titleSuggestions.js';
+import {
+  generateEpisodeTitleSuggestions,
+  type EpisodeTitleNichePreset,
+  type EpisodeTitleTonePreset,
+} from '../../podsignal/titleSuggestions.js';
 
 function requireUser(request: FastifyRequest, reply: FastifyReply): string | null {
   const userId = request.user?.userId;
@@ -120,6 +124,8 @@ const workspaceListQuerySchema = z.object({
 const titleSuggestionsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(8).default(3),
   title: z.string().min(1).max(500).optional(),
+  tonePreset: z.enum(['balanced', 'authority', 'curiosity', 'contrarian', 'practical']).optional(),
+  nichePreset: z.enum(['general', 'b2b', 'creator-economy', 'wellness', 'finance', 'tech', 'media']).optional(),
 });
 
 // ── Routes ─────────────────────────────────────────────────────────────────
@@ -409,7 +415,15 @@ export async function episodeRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/:id/title-suggestions',
     async (
-      request: FastifyRequest<{ Params: { id: string }; Querystring: { limit?: string; title?: string } }>,
+      request: FastifyRequest<{
+        Params: { id: string };
+        Querystring: {
+          limit?: string;
+          title?: string;
+          tonePreset?: EpisodeTitleTonePreset;
+          nichePreset?: EpisodeTitleNichePreset;
+        };
+      }>,
       reply: FastifyReply,
     ) => {
       const userId = requireUser(request, reply);
@@ -458,7 +472,12 @@ export async function episodeRoutes(app: FastifyInstance): Promise<void> {
           clipTitles: episodeClips.map((c) => c.title),
           transcriptSegmentTexts: segs.map((s) => s.text),
         },
-        { limit: query.data.limit, allowLlm: true },
+        {
+          limit: query.data.limit,
+          allowLlm: true,
+          tonePreset: query.data.tonePreset ?? 'balanced',
+          nichePreset: query.data.nichePreset ?? 'general',
+        },
       );
 
       return reply.send(result);
