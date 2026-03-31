@@ -2,26 +2,52 @@ import { useRef, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useSseConnection } from '../hooks/useSseConnection';
 import { MeasurementHonestyBanner } from '../components/MeasurementHonestyBanner';
-import { fetchPodsignalReportSummary, fetchPodsignalSummary, type PodsignalSummary } from '../api/client';
+import {
+  fetchDashboardFeed,
+  fetchPodsignalReportSummary,
+  fetchPodsignalSummary,
+  type DashboardFeedResponse,
+  type PodsignalSummary,
+} from '../api/client';
 import './podsignal-pages.css';
 
-/**
- * Home dashboard — observed KPIs from workspace APIs; lower sections are illustrative placeholders.
- */
+function statusChip(status: string): { label: string; className: string } {
+  if (status === 'READY') return { label: 'Ready', className: 'ps-badge ps-badge--green' };
+  if (status === 'PROCESSING') return { label: 'Processing', className: 'ps-badge ps-badge--yellow' };
+  if (status === 'FAILED') return { label: 'Failed', className: 'ps-badge ps-badge--red' };
+  return { label: status, className: 'ps-badge' };
+}
+
+function activityLabel(eventType: string): string {
+  const labels: Record<string, string> = {
+    title_selected: 'Title selected',
+    title_copied: 'Title copied',
+    launch_pack_approved: 'Launch pack approved',
+    sponsor_report_exported: 'Sponsor PDF exported',
+    sponsor_one_pager_exported: 'Sponsor brief exported',
+    trackable_link_created: 'Trackable link created',
+    title_preset_default_applied: 'Title defaults applied',
+    title_preset_overridden: 'Title preset overridden',
+  };
+  return labels[eventType] ?? eventType.replaceAll('_', ' ');
+}
+
 export function DashboardPage() {
   const [observedClicks30d, setObservedClicks30d] = useState<number | null>(null);
   const [usageTotal30d, setUsageTotal30d] = useState<number | null>(null);
   const [summary, setSummary] = useState<PodsignalSummary | null>(null);
+  const [feed, setFeed] = useState<DashboardFeedResponse | null>(null);
   const [metricsError, setMetricsError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([fetchPodsignalReportSummary(), fetchPodsignalSummary()])
-      .then(([report, sum]) => {
+    Promise.all([fetchPodsignalReportSummary(), fetchPodsignalSummary(), fetchDashboardFeed()])
+      .then(([report, sum, dashboardFeed]) => {
         if (cancelled) return;
         setObservedClicks30d(report.trackableLinkClicksObserved);
         setUsageTotal30d(report.outputUsageEventTotal);
         setSummary(sum);
+        setFeed(dashboardFeed);
         setMetricsError(false);
       })
       .catch(() => {
@@ -29,6 +55,7 @@ export function DashboardPage() {
         setObservedClicks30d(null);
         setUsageTotal30d(null);
         setSummary(null);
+        setFeed(null);
         setMetricsError(true);
       });
     return () => {
@@ -149,168 +176,129 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <p style={{ fontSize: 12, color: '#9ca3af', margin: '16px 0 8px' }}>
-        <strong style={{ color: '#6b7280' }}>Illustrative sample blocks below</strong> — not your workspace data. Use{' '}
-        <Link to="/episodes" style={{ color: '#4f46e5', fontWeight: 600 }}>
-          Episodes
-        </Link>{' '}
-        → open an episode → <strong style={{ color: '#6b7280' }}>Launch</strong> for real approvals, links, and checklist.
-      </p>
-
       <div className="ps-split-2">
         <section className="ps-card">
-          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px', color: '#111827' }}>Launching soon</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px', color: '#111827' }}>Recent episodes</h2>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 12 }}>
-            {[
-              ['Episode 245: Market Trends', 'May 15 · 9:00 AM'],
-              ['Growth Tactics Q2', 'May 16 · 6:00 AM'],
-              ['Founder AMA', 'May 18 · 12:00 PM'],
-            ].map(([t, d]) => (
-              <li
-                key={t}
-                style={{
-                  display: 'flex',
-                  gap: 12,
-                  alignItems: 'center',
-                  paddingBottom: 12,
-                  borderBottom: '1px solid #f3f4f6',
-                }}
-              >
-                <div className="ps-thumb" />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: '#111827' }}>{t}</div>
-                  <div style={{ fontSize: 12, color: '#9ca3af' }}>{d}</div>
-                </div>
-                <Link to="/campaigns" style={{ fontSize: 13, fontWeight: 600, color: '#4f46e5' }}>
-                  View campaign
-                </Link>
+            {(feed?.recentEpisodes ?? []).length === 0 ? (
+              <li style={{ fontSize: 13, color: '#6b7280' }}>
+                No episodes yet. Create your first one from <Link to="/shows">Shows</Link>.
               </li>
-            ))}
+            ) : (
+              (feed?.recentEpisodes ?? []).slice(0, 6).map((ep) => {
+                const chip = statusChip(ep.status);
+                return (
+                  <li
+                    key={ep.id}
+                    style={{
+                      display: 'flex',
+                      gap: 12,
+                      alignItems: 'center',
+                      paddingBottom: 12,
+                      borderBottom: '1px solid #f3f4f6',
+                    }}
+                  >
+                    <div className="ps-thumb" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 14, color: '#111827' }}>{ep.title}</div>
+                      <div style={{ fontSize: 12, color: '#9ca3af' }}>
+                        {ep.podcastTitle} · {new Date(ep.updatedAt).toLocaleString()}
+                      </div>
+                    </div>
+                    <span className={chip.className}>{chip.label}</span>
+                    <Link to={`/episodes/${ep.id}`} style={{ fontSize: 13, fontWeight: 600, color: '#4f46e5' }}>
+                      Open
+                    </Link>
+                  </li>
+                );
+              })
+            )}
           </ul>
         </section>
 
         <section className="ps-card" style={{ borderLeft: '4px solid #fb923c' }}>
-          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 8px', color: '#111827' }}>Approval tasks</h2>
-          <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 14px' }}>5 tasks waiting</p>
+          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 8px', color: '#111827' }}>Open launch tasks</h2>
+          <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 14px' }}>
+            {(feed?.attentionItems ?? []).filter((x) => x.type === 'open_task').length} active checklist items
+          </p>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
-            {['Cover art', 'YouTube thumbnail', 'Newsletter draft'].map((x) => (
-              <li key={x} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 14, color: '#374151' }}>{x}</span>
-                <button type="button" className="ps-btn-outline" style={{ padding: '6px 12px', fontSize: 12 }}>
+            {(feed?.attentionItems ?? []).filter((x) => x.type === 'open_task').slice(0, 5).map((item) => (
+              <li key={`${item.episodeId}-${item.detail}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: 14, color: '#374151' }}>
+                  {item.detail}
+                  <span style={{ color: '#9ca3af' }}> · {item.episodeTitle}</span>
+                </span>
+                <Link
+                  to={`/episodes/${item.episodeId}/launch`}
+                  className="ps-btn-outline"
+                  style={{ padding: '6px 12px', fontSize: 12, textDecoration: 'none' }}
+                >
                   Review
-                </button>
+                </Link>
               </li>
             ))}
+            {(feed?.attentionItems ?? []).filter((x) => x.type === 'open_task').length === 0 ? (
+              <li style={{ fontSize: 13, color: '#6b7280' }}>No open launch tasks right now.</li>
+            ) : null}
           </ul>
         </section>
       </div>
 
       <div className="ps-split-2">
         <section className="ps-card" style={{ borderLeft: '4px solid #ef4444' }}>
-          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 8px', color: '#111827' }}>Blocked items (sample)</h2>
-          <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 14px' }}>Placeholder copy — triage real issues from Episodes.</p>
+          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 8px', color: '#111827' }}>Blocked items</h2>
+          <p style={{ fontSize: 13, color: '#6b7280', margin: '0 0 14px' }}>Processing failures and launch blockers detected from live data.</p>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 10 }}>
-            <li style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 14, color: '#374151' }}>Missing sponsor read</span>
-              <Link to="/episodes" style={{ fontSize: 13, fontWeight: 600, color: '#4f46e5' }}>
-                Go to episodes
-              </Link>
-            </li>
-            <li style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 14, color: '#374151' }}>YouTube upload failed</span>
-              <Link to="/episodes" style={{ fontSize: 13, fontWeight: 600, color: '#4f46e5' }}>
-                Go to episodes
-              </Link>
-            </li>
+            {(feed?.attentionItems ?? [])
+              .filter((x) => x.type === 'failed_episode')
+              .slice(0, 5)
+              .map((item) => (
+                <li key={`${item.episodeId}-${item.detail}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 14, color: '#374151' }}>
+                    {item.episodeTitle}
+                    <span style={{ color: '#9ca3af' }}> · {item.detail}</span>
+                  </span>
+                  <Link to={`/episodes/${item.episodeId}`} style={{ fontSize: 13, fontWeight: 600, color: '#4f46e5' }}>
+                    Open episode
+                  </Link>
+                </li>
+              ))}
+            {(feed?.attentionItems ?? []).filter((x) => x.type === 'failed_episode').length === 0 ? (
+              <li style={{ fontSize: 13, color: '#6b7280' }}>No failed episodes in your workspace.</li>
+            ) : null}
           </ul>
         </section>
 
         <section className="ps-card">
-          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px', color: '#111827' }}>Scheduled launches</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px', color: '#111827' }}>First sponsor-proof checklist</h2>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 8, fontSize: 13, color: '#4b5563' }}>
-            <li>Today 3:00 PM — EP 241 checklist</li>
-            <li>Today 6:00 PM — Shorts batch</li>
-            <li>Tomorrow 8:00 AM — Newsletter</li>
-            <li>Tomorrow 11:00 AM — RSS publish</li>
+            <li>{summary && summary.shows > 0 ? '✓' : '•'} Create at least one show</li>
+            <li>{summary && summary.episodes > 0 ? '✓' : '•'} Add and process one episode</li>
+            <li>{observedClicks30d && observedClicks30d > 0 ? '✓' : '•'} Generate and click a trackable launch link</li>
+            <li>{usageTotal30d && usageTotal30d > 0 ? '✓' : '•'} Export a sponsor brief from Reports</li>
           </ul>
         </section>
       </div>
 
-      <section className="ps-card">
-        <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 8px', color: '#111827' }}>Show performance (sample)</h2>
-        <p style={{ fontSize: 12, color: '#9ca3af', margin: '0 0 16px' }}>Illustrative table — not connected to your shows.</p>
-        <div className="ps-table-wrap">
-          <table className="ps-table">
-            <thead>
-              <tr>
-                <th>Show</th>
-                <th>Readiness</th>
-                <th>Status</th>
-                <th>Issues</th>
-              </tr>
-            </thead>
-            <tbody>
-              {[
-                ['The Daily Brief', '87%', 'Live', '2 issues'],
-                ['Product Talk', '92%', 'Scheduled', 'All clear'],
-                ['Growth Insights', '78%', 'Live', 'All clear'],
-              ].map(([name, r, st, iss]) => (
-                <tr key={name}>
-                  <td style={{ fontWeight: 600, color: '#111827' }}>{name}</td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div
-                        style={{
-                          flex: 1,
-                          maxWidth: 120,
-                          height: 6,
-                          borderRadius: 4,
-                          background: '#e5e7eb',
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: r,
-                            height: '100%',
-                            borderRadius: 4,
-                            background: Number(String(r).replace('%', '')) > 85 ? '#22c55e' : '#f59e0b',
-                          }}
-                        />
-                      </div>
-                      <span style={{ fontSize: 12, fontWeight: 600 }}>{r}</span>
-                    </div>
-                  </td>
-                  <td>
-                    <span className={`ps-badge ${st === 'Live' ? 'ps-badge--green' : 'ps-badge--yellow'}`}>{st}</span>
-                  </td>
-                  <td style={{ fontSize: 13, fontWeight: 600, color: iss === 'All clear' ? '#16a34a' : '#dc2626' }}>
-                    {iss}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
       <div className="ps-split-2">
         <section className="ps-card">
-          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px', color: '#111827' }}>Recent activity (sample)</h2>
+          <h2 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 14px', color: '#111827' }}>Recent activity</h2>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'grid', gap: 12 }}>
-            {[
-              ['Cover art generated for Episode 241', '12 min ago', '#22c55e'],
-              ['Campaign approved for EP 238', '1h ago', '#6366f1'],
-              ['YouTube asset failed', '2h ago', '#f97316'],
-            ].map(([text, time, dot]) => (
-              <li key={text} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 14 }}>
-                <span style={{ width: 8, height: 8, borderRadius: 4, background: dot, marginTop: 6, flexShrink: 0 }} />
+            {(feed?.recentActivity ?? []).slice(0, 8).map((a) => (
+              <li key={a.id} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', fontSize: 14 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 4, background: '#6366f1', marginTop: 6, flexShrink: 0 }} />
                 <div>
-                  <div style={{ color: '#374151' }}>{text}</div>
-                  <div style={{ fontSize: 12, color: '#9ca3af' }}>{time}</div>
+                  <div style={{ color: '#374151' }}>
+                    {activityLabel(a.eventType)}
+                    {a.episodeTitle ? ` · ${a.episodeTitle}` : ''}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#9ca3af' }}>{new Date(a.createdAt).toLocaleString()}</div>
                 </div>
               </li>
             ))}
+            {(feed?.recentActivity ?? []).length === 0 ? (
+              <li style={{ fontSize: 13, color: '#6b7280' }}>No activity yet. Start from Shows or an episode launch page.</li>
+            ) : null}
           </ul>
         </section>
 

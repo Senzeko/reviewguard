@@ -47,6 +47,7 @@ const envSchema = z.object({
   SQUARE_APPLICATION_SECRET: z.string().optional().default(''),
   CLOVER_APP_ID: z.string().optional().default(''),
   CLOVER_APP_SECRET: z.string().optional().default(''),
+  YOUTUBE_DATA_API_KEY: z.string().optional().default(''),
 
   // ── Runtime ────────────────────────────────────────────────────────────────
   NODE_ENV: z

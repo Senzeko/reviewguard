@@ -21,7 +21,7 @@ export function MeasurementHonestyBanner() {
       <strong>How we talk about numbers:</strong> PodSignal distinguishes{' '}
       <em>observed</em> events (clicks on your tracked links, exports you make) from{' '}
       <em>directional</em> signals and <em>estimates</em>. We do not claim exact causality unless the
-      data path supports it. Charts may mix sample and live data during rollout — check labels.
+      data path supports it.
     </div>
   );
 }

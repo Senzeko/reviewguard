@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  downloadPodsignalSponsorBriefMarkdown,
   downloadPodsignalSponsorReportPdf,
   fetchPodsignalReportSummary,
   type PodsignalReportSummary,
@@ -9,76 +10,6 @@ import { MeasurementHonestyBanner } from '../components/MeasurementHonestyBanner
 import { trackOutputUsage } from '../lib/trackOutputUsage';
 import './podsignal-pages.css';
 import './pilot-report.css';
-
-function formatExportDocument(report: PodsignalReportSummary): string {
-  const lines: string[] = [
-    '══════════════════════════════════════════════════════════════',
-    '  PODSIGNAL — LAUNCH & SPONSOR PROOF',
-    '  Closed beta · confidential · counts from PodSignal only',
-    '══════════════════════════════════════════════════════════════',
-    '',
-    'HOW TO READ THIS FILE',
-    '  • Executive summary = factual counts in the reporting window (no host-platform analytics).',
-    '  • “What likely worked” = qualitative read of the same signals — not proof of audience lift.',
-    '  • Before/after = how PodSignal observes prep vs. link distribution; still not Spotify/Apple plays.',
-    '  • Sections labeled PROXY or directional are operational hints, not reach metrics.',
-    '',
-    `Generated (UTC): ${report.generatedAt}`,
-    `Reporting window: last ${report.windowDays} days`,
-    '',
-    '— EXECUTIVE SUMMARY —',
-    report.narrative.headline,
-    report.narrative.body,
-    '',
-    '— WHAT LIKELY WORKED (QUALITATIVE · NOT CAUSAL) —',
-    report.likelyWorkedNarrative,
-    '',
-    '— BEFORE / AFTER LAUNCH (PODSIGNAL-OBSERVED) —',
-    report.beforeAfterNarrative,
-    '',
-    '— WORKSPACE SNAPSHOT (OBSERVED / PROXY) —',
-    `Shows in workspace: ${report.workspace.shows}`,
-    `Active campaigns (status ACTIVE): ${report.workspace.activeCampaigns}`,
-    `Launch checklist tasks done / total (proxy for ops follow-through): ${report.workspace.launchTasksDone} / ${report.workspace.launchTasksTotal}`,
-    `Launch packs approved in-app (observed events): ${report.launchPackApprovalsObserved}`,
-    '',
-    '— METRICS BY EVIDENCE LAYER —',
-    'OBSERVED (directly recorded in PodSignal):',
-    ...report.evidenceGuide.observed.map((s) => `  • ${s}`),
-    '',
-    'PROXY (directional, not audience proof):',
-    ...report.evidenceGuide.proxy.map((s) => `  • ${s}`),
-    '',
-    'ESTIMATED (not used in this report unless noted):',
-    ...report.evidenceGuide.estimated.map((s) => `  • ${s}`),
-    '',
-    'UNSUPPORTED (do not claim without external data):',
-    ...report.evidenceGuide.unsupported.map((s) => `  • ${s}`),
-    '',
-    '— OBSERVED OUTPUT USAGE (EVENT COUNTS) —',
-    `Total usage events in window: ${report.outputUsageEventTotal}`,
-    ...Object.entries(report.outputUsageByType)
-      .sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => `  ${k}: ${v}`),
-    '',
-    `Trackable short-link clicks (observed redirects): ${report.trackableLinkClicksObserved}`,
-    '',
-    '— CLICKS BY EPISODE (OBSERVED) —',
-    ...(report.clicksByEpisode.length === 0
-      ? ['  (none yet — create links from Episode launch)']
-      : report.clicksByEpisode.map(
-          (r) => `  ${r.episodeTitle}: ${r.clicks} clicks [${r.evidence}]`,
-        )),
-    '',
-    '— CLOSING —',
-    'This export is a point-in-time record of PodSignal-observed events and redirect hits. ',
-    'It is suitable to share with partners when you explain that listener and ad numbers live elsewhere unless you attach them.',
-    'PodSignal does not infer causality between in-app activity and third-party growth from this file alone.',
-    '',
-    '══════════════════════════════════════════════════════════════',
-  ];
-  return lines.join('\n');
-}
 
 /**
  * Premium launch proof — shareable text export grounded in observed + labeled evidence.
@@ -122,16 +53,10 @@ export function SponsorReportsPlaceholder() {
 
   const exportProof = () => {
     if (!report) return;
-    const text = formatExportDocument(report);
-    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `podsignal-launch-proof-${new Date().toISOString().slice(0, 10)}.txt`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    void downloadPodsignalSponsorBriefMarkdown();
     void trackOutputUsage({
       eventType: 'sponsor_one_pager_exported',
-      payload: { format: 'txt', windowDays: report.windowDays },
+      payload: { format: 'md', windowDays: report.windowDays },
     });
   };
 
@@ -175,7 +100,7 @@ export function SponsorReportsPlaceholder() {
             {refreshing ? 'Refreshing…' : 'Refresh numbers'}
           </button>
           <button type="button" className="ps-btn-primary" disabled={!report} onClick={() => exportProof()}>
-            Export shareable proof (TXT)
+            Download sponsor brief (MD)
           </button>
           <button
             type="button"

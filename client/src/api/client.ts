@@ -129,6 +129,17 @@ export interface HostMetricSnapshotRow {
   evidence: 'self_reported';
 }
 
+export interface YoutubeImportResult {
+  snapshotId: string | null;
+  createdAt: string;
+  source: 'youtube_data_api';
+  evidence: 'proxy';
+  videoId: string;
+  title: string | null;
+  channelTitle: string | null;
+  views: number;
+}
+
 export async function fetchHostMetricSnapshots(limit = 50): Promise<{ snapshots: HostMetricSnapshotRow[] }> {
   const { data } = await api.get<{ snapshots: HostMetricSnapshotRow[] }>('/api/analytics/host-snapshots', {
     params: { limit },
@@ -148,6 +159,43 @@ export async function createHostMetricSnapshot(body: {
 
 export async function deleteHostMetricSnapshot(id: string): Promise<void> {
   await api.delete(`/api/analytics/host-snapshots/${id}`);
+}
+
+export async function importYoutubeVideoMetric(body: {
+  videoUrlOrId: string;
+  episodeId?: string | null;
+}): Promise<YoutubeImportResult> {
+  const { data } = await api.post<YoutubeImportResult>('/api/analytics/youtube/import', body);
+  return data;
+}
+
+export interface DashboardFeedResponse {
+  recentEpisodes: Array<{
+    id: string;
+    title: string;
+    status: string;
+    podcastTitle: string;
+    updatedAt: string;
+  }>;
+  attentionItems: Array<{
+    type: 'failed_episode' | 'open_task';
+    episodeId: string;
+    episodeTitle: string;
+    podcastTitle: string;
+    detail: string;
+  }>;
+  recentActivity: Array<{
+    id: string;
+    eventType: string;
+    createdAt: string;
+    episodeId: string | null;
+    episodeTitle: string | null;
+  }>;
+}
+
+export async function fetchDashboardFeed(): Promise<DashboardFeedResponse> {
+  const { data } = await api.get<DashboardFeedResponse>('/api/analytics/dashboard-feed');
+  return data;
 }
 
 // ── PodSignal — podcasts & episodes ─────────────────────────────────────────
@@ -715,6 +763,19 @@ export async function downloadPodsignalSponsorReportPdf(): Promise<void> {
   const a = document.createElement('a');
   a.href = url;
   a.download = 'podsignal-sponsor-proof.pdf';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadPodsignalSponsorBriefMarkdown(): Promise<void> {
+  const res = await api.get<string>('/api/podsignal/sponsor-brief.md', {
+    responseType: 'text',
+  });
+  const blob = new Blob([res.data], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'podsignal-sponsor-brief.md';
   a.click();
   URL.revokeObjectURL(url);
 }
