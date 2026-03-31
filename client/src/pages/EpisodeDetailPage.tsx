@@ -495,12 +495,8 @@ export function EpisodeDetailPage() {
     title.trim() === serverTitleSuggestionsForTitle && serverTitleSuggestions.length > 0
       ? serverTitleSuggestions
       : fallbackTitleVariants;
-
-  useEffect(() => {
-    if (titleVariantIdx >= youtubeTitleVariants.length) {
-      setTitleVariantIdx(0);
-    }
-  }, [titleVariantIdx, youtubeTitleVariants.length]);
+  const effectiveTitleVariantIdx =
+    titleVariantIdx >= 0 && titleVariantIdx < youtubeTitleVariants.length ? titleVariantIdx : 0;
 
   return (
     <div style={{ display: 'grid', gap: 14 }}>
@@ -962,16 +958,16 @@ export function EpisodeDetailPage() {
                 alignItems: 'flex-start',
                 padding: 10,
                 borderRadius: 8,
-                border: titleVariantIdx === idx ? '2px solid #6366f1' : '1px solid #e5e7eb',
+                border: effectiveTitleVariantIdx === idx ? '2px solid #6366f1' : '1px solid #e5e7eb',
                 cursor: 'pointer',
               }}
             >
               <input
                 type="radio"
                 name="ytTitle"
-                checked={titleVariantIdx === idx}
+                checked={effectiveTitleVariantIdx === idx}
                 onChange={() => {
-                  if (titleVariantIdx === idx) return;
+                  if (effectiveTitleVariantIdx === idx) return;
                   setTitleVariantIdx(idx);
                   void trackOutputUsage({
                     eventType: 'title_option_selected',
