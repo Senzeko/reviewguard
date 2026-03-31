@@ -1,5 +1,6 @@
 /**
- * Episode title suggestions with deterministic scoring and optional LLM reranking.
+ * Episode title suggestions with deterministic scoring, optional LLM candidate
+ * generation, and optional LLM reranking.
  * Never throws from the public API; falls back to heuristic ordering.
  */
 
@@ -54,6 +55,11 @@ function trimToLength(input: string, max = MAX_TITLE_LEN): string {
   return `${(noHalfWord || cut).trim()}...`;
 }
 
+function sanitizeCandidate(input: string): string {
+  // Keep punctuation that helps title structure, strip noisy wrappers.
+  return normalizeText(input.replace(/^["'`]+|["'`]+$/g, ''));
+}
+
 function extractTopTerms(text: string, limit: number): string[] {
   const counts = new Map<string, number>();
   const words = text.toLowerCase().match(/[a-z0-9']+/g) ?? [];
@@ -93,6 +99,8 @@ function buildRawCandidates(input: EpisodeTitleSuggestionInput, topTerms: string
   const topicPhrase = chooseTopicPhrase(topTerms);
   const firstClip = normalizeText(input.clipTitles[0] ?? '');
   const secondTopic = topTerms[2] ? toTitleCase(topTerms[2]) : null;
+  const thirdTopic = topTerms[3] ? toTitleCase(topTerms[3]) : null;
+  const altTopic = topTerms[4] ? toTitleCase(topTerms[4]) : null;
 
   return [
     baseTitle,
@@ -103,6 +111,12 @@ function buildRawCandidates(input: EpisodeTitleSuggestionInput, topTerms: string
     secondTopic ? `${secondTopic} insights from ${baseTitle}` : `${baseTitle} - Practical insights`,
     topicPhrase ? `${baseTitle}: ${topicPhrase} breakdown` : `${baseTitle}: Full breakdown`,
     topicPhrase ? `The real story on ${topicPhrase} (${baseTitle})` : `${baseTitle} - What matters most`,
+    topicPhrase ? `${topicPhrase}: What most people miss` : `${baseTitle}: What most people miss`,
+    topicPhrase ? `${topicPhrase} playbook: wins, mistakes, fixes` : `${baseTitle}: wins, mistakes, fixes`,
+    thirdTopic ? `${thirdTopic} mistakes that kill momentum` : `${baseTitle}: mistakes to avoid`,
+    secondTopic ? `Stop guessing: ${secondTopic} that actually works` : `Stop guessing: what actually works`,
+    altTopic ? `${altTopic} in 2026: what's changing now` : `${baseTitle}: what's changing now`,
+    firstClip ? `${firstClip} (and why it matters)` : `${baseTitle}: one shift that changes everything`,
   ];
 }
 
@@ -129,11 +143,13 @@ function scoreDeterministicCandidates(candidates: string[], topTerms: string[]):
       const keywordHits = topTerms.reduce((acc, term) => (normalized.includes(term) ? acc + 1 : acc), 0);
       const keywordScore = Math.min(0.45, keywordHits * 0.15);
       const structureBonus = /[:|?]/.test(candidate) ? 0.08 : 0;
-      const score = Number((lenScore + keywordScore + structureBonus).toFixed(4));
+      const actionBonus =
+        /(how|why|stop|mistakes|playbook|works|changing|matters)/i.test(candidate) ? 0.06 : 0;
+      const score = Number((lenScore + keywordScore + structureBonus + actionBonus).toFixed(4));
       return {
         label: candidate,
         score,
-        reason: `Heuristic score: length-fit + keyword overlap (${keywordHits})`,
+        reason: `Heuristic score: length-fit + keyword overlap (${keywordHits}) + hook strength`,
       };
     })
     .sort((a, b) => b.score - a.score);
@@ -213,6 +229,54 @@ async function rerankWithLlm(
   }
 }
 
+async function generateCandidatesWithLlm(
+  input: EpisodeTitleSuggestionInput,
+  seeded: string[],
+): Promise<string[] | null> {
+  const system = [
+    'You write high-performing YouTube titles for podcast clips/episodes.',
+    'Goal: maximize curiosity and clicks WITHOUT clickbait or false claims.',
+    `Return ONLY JSON: {"candidates":["title1","title2",...]} with 8-14 items.`,
+    `Rules: each title <= ${MAX_TITLE_LEN} chars, specific, concrete, readable, no emojis.`,
+    'Use strong hooks (why/how/mistakes/framework/what changed), keep truthful to supplied content.',
+    'Avoid generic labels like "Highlights and takeaways".',
+  ].join(' ');
+
+  const userContent = JSON.stringify({
+    episodeTitle: input.title,
+    summary: input.summary ?? '',
+    clipTitles: input.clipTitles.slice(0, 10),
+    transcriptExcerpt: (input.transcript ?? '').slice(0, 7000),
+    transcriptSegments: input.transcriptSegmentTexts.slice(0, 60),
+    seededCandidates: seeded.slice(0, 10),
+  });
+
+  try {
+    const client = await getClient();
+    const message = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 900,
+      temperature: 0.35,
+      system,
+      messages: [{ role: 'user', content: userContent }],
+    });
+    const block = message.content[0];
+    const raw = block && block.type === 'text' ? block.text : '';
+    if (!raw) return null;
+
+    const parsed: unknown = JSON.parse(raw);
+    const arr = (parsed as { candidates?: unknown[] })?.candidates;
+    if (!Array.isArray(arr)) return null;
+    const cleaned = arr
+      .filter((x): x is string => typeof x === 'string')
+      .map((s) => trimToLength(sanitizeCandidate(s)))
+      .filter((s) => s.length > 0);
+    return cleaned.length > 0 ? cleaned : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function generateEpisodeTitleSuggestions(
   input: EpisodeTitleSuggestionInput,
   opts?: { limit?: number; allowLlm?: boolean },
@@ -233,12 +297,21 @@ export async function generateEpisodeTitleSuggestions(
 
   const context = buildContext(input);
   const topTerms = extractTopTerms(context, 8);
-  const rawCandidates = buildRawCandidates(input, topTerms);
-  const unique = dedupeCandidates(rawCandidates);
-  const deterministic = scoreDeterministicCandidates(unique, topTerms);
+  const seeded = dedupeCandidates(buildRawCandidates(input, topTerms));
+
+  let candidatePool = seeded;
+  let usedLlm = false;
+  if (opts?.allowLlm !== false) {
+    const llmCandidates = await generateCandidatesWithLlm(input, seeded);
+    if (llmCandidates && llmCandidates.length > 0) {
+      candidatePool = dedupeCandidates([...llmCandidates, ...seeded]);
+      usedLlm = true;
+    }
+  }
+
+  const deterministic = scoreDeterministicCandidates(candidatePool, topTerms);
 
   let ranked = deterministic;
-  let usedLlm = false;
   if (opts?.allowLlm !== false) {
     const llmRanked = await rerankWithLlm(input, deterministic);
     if (llmRanked) {
@@ -259,7 +332,6 @@ export function buildDeterministicTitleCandidatesForTest(
 ): EpisodeTitleSuggestion[] {
   const context = buildContext(input);
   const topTerms = extractTopTerms(context, 8);
-  const rawCandidates = buildRawCandidates(input, topTerms);
-  const unique = dedupeCandidates(rawCandidates);
+  const unique = dedupeCandidates(buildRawCandidates(input, topTerms));
   return scoreDeterministicCandidates(unique, topTerms);
 }

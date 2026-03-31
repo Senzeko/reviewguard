@@ -18,6 +18,9 @@ describe('titleSuggestions', () => {
     expect(ranked.length).toBeGreaterThanOrEqual(3);
     expect(ranked[0]!.label.length).toBeGreaterThan(10);
     expect(ranked[0]!.score).toBeGreaterThan(0);
+    expect(
+      ranked.slice(0, 5).some((r) => /how|why|mistakes|stop|playbook|:|\?|\|/i.test(r.label)),
+    ).toBe(true);
   });
 
   it('falls back safely when title is blank', async () => {
